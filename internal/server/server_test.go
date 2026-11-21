@@ -1,0 +1,189 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/bitop-dev/sec1-mcp/internal/catalog"
+	"github.com/bitop-dev/sec1-mcp/internal/intel"
+)
+
+// connect starts the server and a real MCP client joined by an in-memory
+// transport, so the tests exercise the protocol and not only the handlers.
+func connect(t *testing.T, client *intel.Client) *mcp.ClientSession {
+	t.Helper()
+	products, err := catalog.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(Deps{Intel: client, Catalog: products})
+	serverSide, clientSide := mcp.NewInMemoryTransports()
+	ctx := context.Background()
+	if _, err := server.Connect(ctx, serverSide, nil); err != nil {
+		t.Fatal(err)
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil).Connect(ctx, clientSide, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// offline is a client whose every request fails at once, for tests that must
+// not reach the network.
+func offline() *intel.Client {
+	client := intel.NewClient("")
+	client.Endpoints = intel.Endpoints{
+		OSV: "http://127.0.0.1:1", GitHub: "http://127.0.0.1:1", NVD: "http://127.0.0.1:1", KEV: "http://127.0.0.1:1",
+		EPSS: "http://127.0.0.1:1", PyPI: "http://127.0.0.1:1", NPM: "http://127.0.0.1:1", GitLab: "http://127.0.0.1:1",
+	}
+	client.RetryDelays = nil
+	client.NVDPause = 0
+	return client
+}
+
+func call(t *testing.T, session *mcp.ClientSession, tool string, arguments map[string]any) (*mcp.CallToolResult, map[string]any) {
+	t.Helper()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: tool, Arguments: arguments})
+	if err != nil {
+		t.Fatalf("%s: protocol error: %v", tool, err)
+	}
+	var structured map[string]any
+	if result.StructuredContent != nil {
+		data, _ := json.Marshal(result.StructuredContent)
+		_ = json.Unmarshal(data, &structured)
+	}
+	return result, structured
+}
+
+func TestToolsAreListedReadOnlyWithSchemas(t *testing.T) {
+	session := connect(t, offline())
+	list, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"check_component", "check_components", "get_advisory", "resolve_component", "suggest_version"}
+	var names []string
+	for _, tool := range list.Tools {
+		names = append(names, tool.Name)
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s is not marked read-only", tool.Name)
+		}
+		if tool.Title == "" || tool.Description == "" || tool.InputSchema == nil || tool.OutputSchema == nil {
+			t.Errorf("%s is missing a title, description, input schema or output schema", tool.Name)
+		}
+	}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("tools = %v, want %v", names, want)
+	}
+}
+
+func TestResolveReadsProductAndVersionFromImage(t *testing.T) {
+	session := connect(t, offline())
+	result, structured := call(t, session, "resolve_component", map[string]any{"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable"})
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %v", result.Content)
+	}
+	component := structured["component"].(map[string]any)
+	if component["name"] != "LiteLLM" || component["version"] != "1.106.6" || component["versionFrom"] != "image-tag" {
+		t.Errorf("component = %v", component)
+	}
+	if structured["recognised"] != true {
+		t.Error("a catalog image should be recognised")
+	}
+	// The serialized JSON is also returned as text, for clients that do not
+	// read structured content.
+	if text, ok := result.Content[0].(*mcp.TextContent); !ok || !strings.Contains(text.Text, `"LiteLLM"`) {
+		t.Errorf("text content should carry the same JSON: %v", result.Content)
+	}
+}
+
+func TestUnknownImageIsNotRecognised(t *testing.T) {
+	session := connect(t, offline())
+	_, structured := call(t, session, "resolve_component", map[string]any{"image": "registry.example.edu/team/mystery:2.0.0"})
+	if structured["recognised"] != false {
+		t.Error("an image outside the catalog must not be recognised")
+	}
+	if component := structured["component"].(map[string]any); component["resolvedFrom"] != "unrecognised" {
+		t.Errorf("resolvedFrom = %v", component["resolvedFrom"])
+	}
+}
+
+func TestInvalidInputIsAToolErrorNotAProtocolError(t *testing.T) {
+	session := connect(t, offline())
+	cases := []map[string]any{
+		{},
+		{"name": "LiteLLM", "version": "1.0; rm -rf /"},
+		{"name": "x", "repo": "https://evil.example/owner/name"},
+		{"name": "x", "cpe": "gitlab:gitlab:*"},
+		{"image": "ghcr.io/a/b:1.0 && curl evil"},
+	}
+	for _, arguments := range cases {
+		result, _ := call(t, session, "resolve_component", arguments)
+		if !result.IsError {
+			t.Errorf("arguments %v should be rejected", arguments)
+		}
+	}
+}
+
+func TestBatchIsCapped(t *testing.T) {
+	session := connect(t, offline())
+	components := make([]map[string]any, maxBatch+1)
+	for i := range components {
+		components[i] = map[string]any{"name": "LiteLLM"}
+	}
+	result, _ := call(t, session, "check_components", map[string]any{"components": components})
+	if !result.IsError {
+		t.Error("a batch over the limit should be rejected")
+	}
+}
+
+func TestUnreachableSourcesGiveUnknownNotClean(t *testing.T) {
+	session := connect(t, offline())
+	result, structured := call(t, session, "check_component", map[string]any{"name": "LiteLLM", "version": "1.106.6"})
+	if result.IsError {
+		t.Fatalf("a failed lookup is an answer, not an error: %v", result.Content)
+	}
+	if structured["status"] != "unknown" {
+		t.Errorf("status = %v, want unknown when nothing could be reached", structured["status"])
+	}
+}
+
+// TestLive runs against the real services. It is skipped unless SEC1_LIVE is
+// set, so the normal test run needs no network.
+func TestLive(t *testing.T) {
+	if os.Getenv("SEC1_LIVE") == "" {
+		t.Skip("set SEC1_LIVE=1 to run against the real advisory services")
+	}
+	session := connect(t, intel.NewClient(t.TempDir()))
+	show := func(tool string, arguments map[string]any) map[string]any {
+		result, structured := call(t, session, tool, arguments)
+		if result.IsError {
+			t.Fatalf("%s failed: %v", tool, result.Content[0].(*mcp.TextContent).Text)
+		}
+		data, _ := json.MarshalIndent(structured, "", "  ")
+		t.Logf("%s %v\n%s", tool, arguments, data)
+		return structured
+	}
+
+	check := show("check_component", map[string]any{"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable", "limit": 3})
+	if check["status"] != "affected" {
+		t.Errorf("LiteLLM 1.106.6 status = %v, want affected", check["status"])
+	}
+	show("check_components", map[string]any{"components": []map[string]any{
+		{"image": "gitlab/gitlab-ee:19.6.1-ee.0"},
+		{"image": "vllm/vllm-openai:latest"},
+		{"image": "registry.example.edu/team/mystery:2.0.0"},
+	}})
+	show("suggest_version", map[string]any{"name": "LiteLLM", "version": "1.106.6"})
+	// Software outside the catalog, identified explicitly.
+	show("check_component", map[string]any{"name": "requests", "ecosystem": "PyPI", "package": "requests", "version": "2.25.0", "limit": 3})
+	show("check_component", map[string]any{"name": "Grafana", "repo": "grafana/grafana", "version": "10.0.0", "limit": 3})
+	show("get_advisory", map[string]any{"id": "CVE-2026-42208"})
+}

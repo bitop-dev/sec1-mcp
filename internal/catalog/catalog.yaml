@@ -1,0 +1,59 @@
+# Products the server recognises by name or by container image.
+#
+# Each entry maps a product to the identifiers the advisory sources need:
+#
+#   ecosystem + package   registry package, for OSV (exact version matching)
+#   repo                  upstream GitHub repository, for its security advisories
+#   cpe                   NVD's vendor:product name
+#   gitlabRepo            gitlab.com project, used only to find the latest release
+#   aliases               other names people and vulnerability lists use
+#   images                container image repositories, without registry host or tag
+#
+# Add a product only with identifiers you have confirmed; a wrong identifier
+# makes the server report on the wrong software.
+
+products:
+  - name: LiteLLM
+    aliases: [litellm, litellm-proxy]
+    ecosystem: PyPI
+    package: litellm
+    repo: BerriAI/litellm
+    cpe: litellm:litellm
+    images:
+      - berriai/litellm
+      - berriai/litellm-database
+      - berriai/litellm-non_root
+      - litellm/litellm
+
+  - name: vLLM
+    aliases: [vllm]
+    ecosystem: PyPI
+    package: vllm
+    repo: vllm-project/vllm
+    cpe: vllm:vllm
+    images:
+      - vllm/vllm-openai
+
+  - name: GitLab
+    aliases: [gitlab-ee, gitlab-ce]
+    cpe: gitlab:gitlab
+    gitlabRepo: gitlab-org/gitlab
+    images:
+      - gitlab/gitlab-ee
+      - gitlab/gitlab-ce
+      - gitlab-org/build/cng/gitlab-webservice-ee
+      - gitlab-org/build/cng/gitlab-webservice-ce
+      - gitlab-org/build/cng/gitlab-sidekiq-ee
+      - gitlab-org/build/cng/gitlab-sidekiq-ce
+      - gitlab-org/build/cng/gitlab-toolbox-ee
+      - gitlab-org/build/cng/gitlab-toolbox-ce
+
+  - name: Onyx
+    aliases: [onyx-app, danswer]
+    repo: onyx-dot-app/onyx
+    images:
+      - onyxdotapp/onyx-backend
+      - onyxdotapp/onyx-web-server
+      - onyxdotapp/onyx-model-server
+      - danswer/danswer-backend
+      - danswer/danswer-web-server
