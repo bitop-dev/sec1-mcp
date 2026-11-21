@@ -1,5 +1,8 @@
 # sec1-mcp
 
+[![CI](https://github.com/bitop-dev/sec1-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/bitop-dev/sec1-mcp/actions/workflows/ci.yml)
+[![Container](https://github.com/bitop-dev/sec1-mcp/actions/workflows/container.yml/badge.svg)](https://github.com/bitop-dev/sec1-mcp/actions/workflows/container.yml)
+
 An MCP server that tells an AI agent which known security advisories apply to
 the software you run or are about to deploy.
 
@@ -9,66 +12,52 @@ images in a Kubernetes cluster) passes what it finds to this server and gets
 back, for each item: whether advisories apply to that version, which are being
 exploited, what version fixes them, and how sure the answer is.
 
-It follows the MCP specification revision **2026-07-28**, through the official
-Go SDK.
-
-## Build and run
-
-Requires Go 1.26 or later.
-
-```sh
-git clone https://github.com/bitop-dev/sec1-mcp.git
-cd sec1-mcp
-go build -o bin/sec1-mcp .
-go test ./...
+```json
+{"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable"}
 ```
 
-Or install the binary straight into your Go bin directory:
+```json
+{
+  "status": "affected",
+  "reason": "2 advisories apply to version 1.106.6.",
+  "latestVersion": "1.110.2",
+  "versionStatus": "behind"
+}
+```
+
+It follows the MCP specification revision **2026-07-28**, through the official
+Go SDK, over stdio or Streamable HTTP.
+
+## Quick start
+
+With Go 1.26 or later:
 
 ```sh
 go install github.com/bitop-dev/sec1-mcp@latest
 ```
 
-The server speaks MCP over stdin and stdout by default, which is how an agent
-on the same machine starts it:
+Or build from a checkout:
 
 ```sh
-bin/sec1-mcp
+git clone https://github.com/bitop-dev/sec1-mcp.git
+cd sec1-mcp
+go build -o bin/sec1-mcp .
 ```
 
-| Flag | Meaning |
-| --- | --- |
-| `-http <addr>` | Serve Streamable HTTP at `http://<addr>/mcp` instead of stdio. |
-| `-cache-dir <dir>` | Where lookups are cached. Defaults to your user cache directory; `""` keeps the cache in memory. |
-| `-version` | Print the version. |
+Or use the container image:
 
-Two optional environment variables raise rate limits: `GITHUB_TOKEN` (GitHub
-allows 60 requests an hour without one) and `NVD_API_KEY` (NVD allows one
-request every six seconds without one). They are read from the environment
-only, and are never logged or cached.
-
-### Connecting an agent
-
-Most MCP clients take a command to start. The entry looks like this, with
-absolute paths:
-
-```json
-{
-  "mcpServers": {
-    "sec1": {
-      "command": "/path/to/sec1-mcp/bin/sec1-mcp"
-    }
-  }
-}
+```sh
+docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:main
 ```
 
-### HTTP mode
+Then register it with your agent. For Claude Code:
 
-`-http 127.0.0.1:8080` serves one endpoint, `/mcp`, with no sessions, and
-refuses requests from other browser origins.
+```sh
+claude mcp add sec1 -- /path/to/sec1-mcp/bin/sec1-mcp
+```
 
-**There is no authentication.** Keep it bound to localhost, or put it behind
-a proxy that authenticates callers before anything else can reach it.
+For other clients, and for connecting over HTTP, see
+[docs/agents.md](docs/agents.md).
 
 ## Tools
 
@@ -82,19 +71,10 @@ All five are read-only.
 | `get_advisory` | Get the full record for one CVE, GHSA or other advisory id. |
 | `resolve_component` | See how a name or image is identified, without any lookups. |
 
-### Identifying a component
-
-A component can be given three ways:
-
-- **By name:** `{"name": "LiteLLM", "version": "1.106.6"}`.
-- **By container image:** `{"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable"}`.
-  The product comes from the image repository and the version from the tag.
-  A registry mirror in front of the name is fine.
-- **By explicit identifiers:** `ecosystem` and `package` (a registry package),
-  `repo` (a GitHub repository), or `cpe` (NVD's `vendor:product`). These work
-  for software the catalog does not know.
-
-### Reading an answer
+A component can be given by name (`LiteLLM`), by container image reference,
+or by explicit identifiers: a registry package, a GitHub repository, or an
+NVD product. The built-in catalog recognises a small set of products by name
+and image; anything else is checked by passing identifiers.
 
 Every answer has a `status`:
 
@@ -106,48 +86,43 @@ Every answer has a `status`:
 | `version_needed` | Advisories exist for the product; without a version it cannot say which apply. |
 | `unknown` | It could not be determined. **This never means safe.** |
 
-`unknown` is what you get when a source could not be reached, when a call ran
-out of time, or when the product is not recognised and no identifiers were
-given. The `coverage` list says what each source did: `checked`, `skipped`
-(with the reason) or `failed`.
+## Documentation
 
-Priorities (`urgent`, `high`, `normal`) come from fixed rules, and each
-advisory's `rationale` names the rule that applied: exploited in the wild or
-critical severity is urgent; high severity is high; an EPSS score of 10% or
-more raises a normal advisory to high.
+| Page | What it covers |
+| --- | --- |
+| [Using it from an agent](docs/agents.md) | Connecting, what to tell the agent, and worked workflows such as auditing a Kubernetes cluster. |
+| [Tool reference](docs/tools.md) | Every tool's inputs and outputs, with real example answers. |
+| [How it works](docs/how-it-works.md) | The sources, how answers are combined, the status and priority rules, caching and deadlines. |
+| [Running the server](docs/deployment.md) | stdio and HTTP, authentication, the container image, and a Kubernetes example. |
+| [The product catalog](docs/catalog.md) | How names and images are matched, and how to add a product. |
 
 ## What it covers, and what it does not
 
 Sources: OSV, the upstream GitHub repository's security advisories, NVD,
-CISA's Known Exploited Vulnerabilities catalog, and EPSS. The latest release
-comes from PyPI, npm, GitHub releases or GitLab tags.
+CISA's Known Exploited Vulnerabilities catalog, and EPSS.
 
-- **It recognises only products in its catalog**, plus anything you identify
-  explicitly. The catalog is `internal/catalog/catalog.yaml`; the comments in
-  it explain how to add a product. Rebuild after editing it.
 - **It reports each product's own advisories.** It does not scan the
   libraries or operating system packages inside a container image. Use an
   image scanner for that.
-- **A tag such as `latest`, or a bare digest, carries no version**, so the
-  answer is `version_needed`.
+- **It does not guess.** A product outside the catalog is unrecognised until
+  you give identifiers for it.
 - **Advisory text is untrusted.** Titles, summaries and reference URLs are
-  written by third parties. The server strips control characters, cuts them
-  to length, and labels them as untrusted in the tool schemas; the agent
+  written by third parties. The server cleans and labels them, and the agent
   reading them must still treat them as data.
-- **Backported fixes are interpreted.** Some projects list one open-ended
-  range per release line (`< 1.106.9`, `< 1.108.6`). The server treats a
-  version as fixed when the same advisory publishes a fix on that version's
-  release line at or below it. See `backported` in `internal/intel/sources.go`.
+- **The HTTP transport has no authentication unless you set a token.** See
+  [docs/deployment.md](docs/deployment.md#authentication).
 
-## Layout
+## Development
 
-```
-main.go                    flags, stdio and HTTP transports
-internal/server            the tools, input validation, output shapes
-internal/intel             sources, merging, priority rules, cache, NVD pacing
-internal/catalog           product names and image names to identifiers
-internal/version           version comparison and ranges
+```sh
+go vet ./...
+go test -race ./...
 ```
 
-`SEC1_LIVE=1 go test ./internal/server -run TestLive -v` runs the tools
-against the real services.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Changes are recorded in
+[CHANGELOG.md](CHANGELOG.md), and security reports go through
+[SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE)

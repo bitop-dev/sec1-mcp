@@ -1,6 +1,6 @@
 module github.com/bitop-dev/sec1-mcp
 
-go 1.26.7
+go 1.26.0
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0

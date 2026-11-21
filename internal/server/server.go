@@ -18,8 +18,9 @@ import (
 	"github.com/bitop-dev/sec1-mcp/internal/intel"
 )
 
-// Version is the server's own version, reported to clients.
-const Version = "0.1.0"
+// Version is the server's own version, reported to clients. Release builds
+// set it with -ldflags "-X .../internal/server.Version=...".
+var Version = "0.1.0-dev"
 
 const (
 	// Deadlines sit below the timeouts MCP clients commonly apply, so the
