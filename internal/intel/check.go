@@ -31,15 +31,15 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 		name    string
 		applies bool
 		skipped string
-		run     func(context.Context, Component) ([]Advisory, error)
+		run     func(context.Context, Component) (sourceResult, error)
 	}{
-		{"osv", component.Ecosystem != "", "no package ecosystem is known for this component", c.osvAdvisories},
+		{"osv", component.Ecosystem != "", "no package ecosystem is known for this component", plain(c.osvAdvisories)},
 		{"github", component.Repo != "", "no upstream GitHub repository is known for this component", c.githubAdvisories},
-		{"nvd", component.CPE != "", "no NVD product identifier is known for this component", c.nvdAdvisories},
+		{"nvd", component.CPE != "", "no NVD product identifier is known for this component", plain(c.nvdAdvisories)},
 	}
 	type outcome struct {
-		advisories []Advisory
-		err        error
+		sourceResult
+		err error
 	}
 	outcomes := make([]outcome, len(jobs))
 	var wait sync.WaitGroup
@@ -50,14 +50,16 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			advisories, err := job.run(ctx, component)
-			outcomes[i] = outcome{advisories, err}
+			found, err := job.run(ctx, component)
+			outcomes[i] = outcome{found, err}
 		}()
 	}
 	wait.Wait()
 
 	merged := &merger{byID: map[string]*Advisory{}}
-	checked, nvdChecked := 0, false
+	checked := 0
+	answered := map[string]bool{}
+	cleared := map[string]bool{}
 	var failed []string
 	for i, job := range jobs {
 		switch {
@@ -68,15 +70,22 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 			result.Coverage = append(result.Coverage, Coverage{job.name, "failed", describe(outcomes[i].err)})
 		default:
 			checked++
-			nvdChecked = nvdChecked || job.name == "nvd"
+			answered[job.name] = true
 			for _, advisory := range outcomes[i].advisories {
 				merged.add(advisory)
 			}
-			result.Coverage = append(result.Coverage, Coverage{job.name, "checked", fmt.Sprintf("%d advisories", len(outcomes[i].advisories))})
+			for id := range outcomes[i].cleared {
+				cleared[id] = true
+			}
+			detail := fmt.Sprintf("%d advisories", len(outcomes[i].advisories))
+			if outcomes[i].detail != "" {
+				detail += "; " + outcomes[i].detail
+			}
+			result.Coverage = append(result.Coverage, Coverage{job.name, "checked", detail})
 		}
 	}
 
-	if coverage, ok := c.applyKEV(ctx, component, merged, nvdChecked); ok {
+	if coverage, ok := c.applyKEV(ctx, component, merged, answered, cleared); ok {
 		result.Coverage = append(result.Coverage, coverage)
 	} else {
 		failed = append(failed, "cisa-kev")
@@ -137,7 +146,7 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 		result.Reason = "Could not be determined: " + strings.Join(failed, ", ") + " could not be checked. Do not treat this as safe."
 	case checked == 0:
 		result.Status = StatusUnknown
-		result.Reason = "No source can check this component by version. Give an ecosystem and package, a repo, or a cpe. Do not treat this as safe."
+		result.Reason = "No source can check this component by version. Give an ecosystem and package, a repo, or a cpe; find_identifiers can suggest candidates. Do not treat this as safe."
 	case component.Version == "" && component.Ecosystem == "" && component.Repo == "":
 		// NVD without a version only looks back 120 days.
 		result.Status = StatusVersionNeeded
@@ -152,10 +161,24 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 	return result
 }
 
+// plain adapts a source that only finds advisories.
+func plain(run func(context.Context, Component) ([]Advisory, error)) func(context.Context, Component) (sourceResult, error) {
+	return func(ctx context.Context, component Component) (sourceResult, error) {
+		advisories, err := run(ctx, component)
+		return sourceResult{advisories: advisories}, err
+	}
+}
+
 // applyKEV marks advisories that are exploited in the wild and adds
 // name-only matches for exploited CVEs no other source reported. The bool is
 // false when the catalog could not be read.
-func (c *Client) applyKEV(ctx context.Context, component Component, merged *merger, nvdChecked bool) (Coverage, bool) {
+//
+// CISA's catalog names products, not versions, so a match on name alone
+// would flag long-fixed vulnerabilities on every check. A name-only match is
+// dropped when a source that knows the CVE has shown the version is not
+// affected: answered says which sources replied, and cleared holds what they
+// already ruled out.
+func (c *Client) applyKEV(ctx context.Context, component Component, merged *merger, answered, cleared map[string]bool) (Coverage, bool) {
 	index, err := c.kev(ctx)
 	if err != nil {
 		return Coverage{"cisa-kev", "failed", describe(err)}, false
@@ -174,23 +197,35 @@ func (c *Client) applyKEV(ctx context.Context, component Component, merged *merg
 			pending = append(pending, entry)
 		}
 	}
-	detail := ""
-	// NVD lists every CVE. When it has version ranges for one of these and
-	// still did not return it for the running version, that version is not
-	// affected, and the name match would be a false alarm.
-	if len(pending) > 0 && component.Version != "" && component.CPE != "" && nvdChecked {
-		if withVersionData, err := c.nvdExploitedWithVersionData(ctx, component); err == nil {
-			kept := pending[:0]
-			for _, entry := range pending {
-				if !withVersionData[entry.CVE] {
-					kept = append(kept, entry)
-				}
+	found := len(pending)
+	drop := func(known map[string]bool) {
+		kept := pending[:0]
+		for _, entry := range pending {
+			if !known[entry.CVE] {
+				kept = append(kept, entry)
 			}
-			if dropped := len(pending) - len(kept); dropped > 0 {
-				detail = fmt.Sprintf("%d name-only matches dropped: NVD shows this version is not affected", dropped)
-			}
-			pending = kept
 		}
+		pending = kept
+	}
+	if component.Version != "" {
+		drop(cleared)
+		// These two lookups cost a request each, so they are made only when
+		// something is left to clear. A CVE the source holds version data
+		// for, and did not return for this version, does not affect it.
+		if len(pending) > 0 && answered["osv"] {
+			if known, err := c.osvKnownIDs(ctx, component); err == nil {
+				drop(known)
+			}
+		}
+		if len(pending) > 0 && answered["nvd"] {
+			if known, err := c.nvdExploitedWithVersionData(ctx, component); err == nil {
+				drop(known)
+			}
+		}
+	}
+	detail := ""
+	if dropped := found - len(pending); dropped > 0 {
+		detail = fmt.Sprintf("%d name-only matches dropped: a source with version data shows this version is not affected", dropped)
 	}
 	for _, entry := range pending {
 		merged.add(Advisory{

@@ -1,6 +1,6 @@
 # Tool reference
 
-All five tools are read-only. Each returns structured content that matches
+All six tools are read-only. Each returns structured content that matches
 its output schema, and the same JSON as text for clients that read only text.
 
 Invalid input and failed lookups come back as a tool result with `isError`
@@ -272,3 +272,60 @@ advisory lookups. Use it to find out whether a product is recognised.
 
 `sources` lists the sources that can check the component by version. When it
 is empty, a check would return `unknown`.
+
+## find_identifiers
+
+Searches PyPI, npm, GitHub and NVD's product dictionary for a product name,
+and returns candidate identifiers. Use it when a product is not recognised.
+
+Input: `name`, such as `MinIO`.
+
+```json
+{
+  "query": "redis",
+  "inCatalog": true,
+  "candidates": [
+    {
+      "kind": "registry-package",
+      "ecosystem": "PyPI",
+      "package": "redis",
+      "exactName": true,
+      "description": "Python client for Redis database and key-value store",
+      "evidence": "a PyPI package of this name exists; latest release 8.1.0"
+    },
+    {
+      "kind": "github-repo",
+      "repo": "redis/redis",
+      "exactName": true,
+      "evidence": "77598 stars"
+    },
+    {
+      "kind": "nvd-product",
+      "cpe": "redis:redis",
+      "exactName": true,
+      "evidence": "245 versions listed in NVD's product dictionary"
+    }
+  ]
+}
+```
+
+The example is shortened; a real answer also carries `coverage`, `guidance`
+and each repository's description.
+
+**The candidates are leads, not answers.** Nothing is applied automatically.
+The example shows why: the PyPI package called `redis` is a client library,
+not the Redis server, and checking it would report on the wrong software.
+Confirm a candidate from its description and evidence before passing it to
+`check_component`.
+
+| Field | Meaning |
+| --- | --- |
+| `inCatalog` | True when the catalog already recognises the name, so no identifiers are needed. |
+| `kind` | `registry-package`, `github-repo` or `nvd-product`. |
+| `ecosystem`, `package`, `repo`, `cpe` | The identifier, in the form `check_component` takes. |
+| `exactName` | True when the candidate's own name equals the name searched for; false when it only contains it. |
+| `description` | Third-party text. Untrusted. |
+| `evidence` | What was found: star count, whether the repository is archived, number of NVD entries. |
+
+Each source returns at most three candidates, exact names first. Forked
+repositories and deprecated NVD entries are left out.

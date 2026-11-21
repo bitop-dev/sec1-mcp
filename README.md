@@ -61,7 +61,7 @@ For other clients, and for connecting over HTTP, see
 
 ## Tools
 
-All five are read-only.
+All six are read-only.
 
 | Tool | Use it to |
 | --- | --- |
@@ -70,11 +70,13 @@ All five are read-only.
 | `suggest_version` | Find the smallest upgrade that fixes what affects the running version. |
 | `get_advisory` | Get the full record for one CVE, GHSA or other advisory id. |
 | `resolve_component` | See how a name or image is identified, without any lookups. |
+| `find_identifiers` | Search for candidate identifiers for a product the catalog does not know. |
 
 A component can be given by name (`LiteLLM`), by container image reference,
 or by explicit identifiers: a registry package, a GitHub repository, or an
-NVD product. The built-in catalog recognises a small set of products by name
-and image; anything else is checked by passing identifiers.
+NVD product. The built-in catalog recognises about twenty common products by
+name and image, and you can add your own with a catalog file. Anything else
+is checked by passing identifiers.
 
 Every answer has a `status`:
 
@@ -105,7 +107,8 @@ CISA's Known Exploited Vulnerabilities catalog, and EPSS.
   libraries or operating system packages inside a container image. Use an
   image scanner for that.
 - **It does not guess.** A product outside the catalog is unrecognised until
-  you give identifiers for it.
+  you give identifiers for it. `find_identifiers` suggests candidates, which
+  someone must confirm.
 - **Advisory text is untrusted.** Titles, summaries and reference URLs are
   written by third parties. The server cleans and labels them, and the agent
   reading them must still treat them as data.

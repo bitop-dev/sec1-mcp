@@ -34,6 +34,8 @@ func main() {
 }
 
 func run() error {
+	catalogPath := flag.String("catalog", os.Getenv("SEC1_CATALOG"),
+		"path to a catalog file of your own products, added to the built-in catalog (also $SEC1_CATALOG)")
 	httpAddr := flag.String("http", os.Getenv("SEC1_HTTP_ADDR"),
 		"serve Streamable HTTP on this address, such as 127.0.0.1:8080, instead of stdio (also $SEC1_HTTP_ADDR)")
 	httpJSON := flag.Bool("http-json", false,
@@ -50,7 +52,7 @@ func run() error {
 	// stdout carries the protocol on stdio, so every log line goes to stderr.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	products, err := catalog.New()
+	products, err := catalog.New(*catalogPath)
 	if err != nil {
 		return err
 	}

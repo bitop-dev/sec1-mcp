@@ -6,6 +6,7 @@ package catalog
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -32,15 +33,109 @@ type Catalog struct {
 	products []Product
 }
 
-// New loads the built-in catalog.
-func New() (*Catalog, error) {
+// New loads the built-in catalog and, when extraPath is not empty, a team's
+// own catalog file in the same format. An entry in the file replaces a
+// built-in entry of the same name; any other entry is added. Both are
+// validated, so a mistake in the file stops the server at start-up instead of
+// producing wrong answers later.
+func New(extraPath string) (*Catalog, error) {
+	products, err := parse(builtinYAML, "built-in catalog")
+	if err != nil {
+		return nil, err
+	}
+	if extraPath != "" {
+		data, err := os.ReadFile(extraPath)
+		if err != nil {
+			return nil, fmt.Errorf("catalog file: %w", err)
+		}
+		extra, err := parse(data, extraPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, product := range extra {
+			replaced := false
+			for i := range products {
+				if key(products[i].Name) == key(product.Name) {
+					products[i], replaced = product, true
+				}
+			}
+			if !replaced {
+				products = append(products, product)
+			}
+		}
+	}
+	return &Catalog{products: products}, nil
+}
+
+// Products returns the catalog's entries.
+func (c *Catalog) Products() []Product { return c.products }
+
+var (
+	ecosystemPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .:_-]{0,39}$`)
+	packagePattern   = regexp.MustCompile(`^[@A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$`)
+	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
+	gitlabPattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100})+$`)
+	cpePattern       = regexp.MustCompile(`^([aoh]:)?[A-Za-z0-9._-]{1,100}:[A-Za-z0-9._-]{1,100}$`)
+	imagePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,199}$`)
+)
+
+// parse reads and validates one catalog document. source names it in errors.
+func parse(data []byte, source string) ([]Product, error) {
 	var file struct {
 		Products []Product `yaml:"products"`
 	}
-	if err := yaml.Unmarshal(builtinYAML, &file); err != nil {
-		return nil, fmt.Errorf("built-in catalog: %w", err)
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	return &Catalog{products: file.Products}, nil
+	seen := map[string]string{}
+	for index, product := range file.Products {
+		if key(product.Name) == "" {
+			return nil, fmt.Errorf("%s: product %d has no name", source, index+1)
+		}
+		fail := func(format string, args ...any) error {
+			return fmt.Errorf("%s: product %q: %s", source, product.Name, fmt.Sprintf(format, args...))
+		}
+		checks := []struct {
+			field, value string
+			pattern      *regexp.Regexp
+			example      string
+		}{
+			{"ecosystem", product.Ecosystem, ecosystemPattern, "PyPI"},
+			{"package", product.Package, packagePattern, "litellm"},
+			{"repo", product.Repo, repoPattern, "BerriAI/litellm"},
+			{"gitlabRepo", product.GitLabRepo, gitlabPattern, "gitlab-org/gitlab"},
+			{"cpe", product.CPE, cpePattern, "gitlab:gitlab"},
+		}
+		for _, check := range checks {
+			if check.value != "" && !check.pattern.MatchString(check.value) {
+				return nil, fail("%s %q is not valid; expected something like %q", check.field, check.value, check.example)
+			}
+		}
+		if product.Package != "" && product.Ecosystem == "" {
+			return nil, fail("package needs an ecosystem")
+		}
+		for _, image := range product.Images {
+			if !imagePattern.MatchString(image) || strings.Contains(image, ":") {
+				return nil, fail("image %q must be a lower-case repository path with no registry host or tag, such as berriai/litellm", image)
+			}
+		}
+		// Two entries answering to the same name or image would make the
+		// answer depend on their order.
+		claims := append([]string{product.Name}, product.Aliases...)
+		for _, claim := range claims {
+			if owner, taken := seen["name:"+key(claim)]; taken && owner != product.Name {
+				return nil, fail("the name %q is already used by %q", claim, owner)
+			}
+			seen["name:"+key(claim)] = product.Name
+		}
+		for _, image := range product.Images {
+			if owner, taken := seen["image:"+image]; taken && owner != product.Name {
+				return nil, fail("the image %q is already used by %q", image, owner)
+			}
+			seen["image:"+image] = product.Name
+		}
+	}
+	return file.Products, nil
 }
 
 // Resolve finds a product by name, alias or package name.
@@ -70,13 +165,32 @@ func (c *Catalog) ResolveImage(reference string) (product Product, tagVersion st
 	tagVersion = VersionFromTag(tag)
 	for _, candidate := range c.products {
 		for _, image := range candidate.Images {
-			image = strings.ToLower(image)
-			if repository == image || strings.HasSuffix(repository, "/"+image) {
+			if imageMatches(repository, image) {
 				return candidate, tagVersion, true
 			}
 		}
 	}
 	return Product{}, tagVersion, false
+}
+
+// imageMatches reports whether an image's repository path is the catalog
+// image, allowing for a mirror's path in front of it.
+//
+// A catalog image with a namespace, such as "gitlab/gitlab-ee", matches any
+// path ending in it. One without, such as "postgres", is an official image:
+// it matches only on its own or under "library/", because "someone/postgres"
+// is a different image that merely shares the name.
+func imageMatches(repository, image string) bool {
+	if repository == image {
+		return true
+	}
+	if !strings.Contains(image, "/") {
+		image = "library/" + image
+		if repository == image {
+			return true
+		}
+	}
+	return strings.HasSuffix(repository, "/"+image)
 }
 
 // ParseImage splits an image reference into its repository path, lower-cased

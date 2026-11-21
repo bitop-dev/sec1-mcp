@@ -13,6 +13,8 @@
 # makes the server report on the wrong software.
 
 products:
+  # ---- AI gateways, model servers and the tools around them
+
   - name: LiteLLM
     aliases: [litellm, litellm-proxy]
     ecosystem: PyPI
@@ -57,3 +59,135 @@ products:
       - onyxdotapp/onyx-model-server
       - danswer/danswer-backend
       - danswer/danswer-web-server
+
+  # ---- Infrastructure
+  #
+  # Each identifier below was checked when it was added: the repository and
+  # its advisories on GitHub, the product name against NVD, and the image
+  # name against its registry.
+
+  - name: PostgreSQL
+    aliases: [postgres]
+    cpe: postgresql:postgresql
+    images:
+      - postgres
+      - cloudnative-pg/postgresql
+
+  - name: Redis
+    repo: redis/redis
+    cpe: redis:redis
+    images:
+      - redis
+
+  - name: Valkey
+    repo: valkey-io/valkey
+    cpe: lfprojects:valkey
+    images:
+      - valkey/valkey
+
+  # NVD files nginx under two product names. This is the one it uses for
+  # current CVEs; older ones are under f5:nginx_open_source.
+  - name: nginx
+    cpe: f5:nginx
+    images:
+      - nginx
+      - nginxinc/nginx-unprivileged
+
+  - name: ingress-nginx
+    aliases: [nginx-ingress-controller, ingress-nginx-controller]
+    cpe: kubernetes:ingress-nginx
+    images:
+      - ingress-nginx/controller
+
+  - name: Kubernetes
+    aliases: [k8s, kube-apiserver, kubelet]
+    repo: kubernetes/kubernetes
+    cpe: kubernetes:kubernetes
+    images:
+      - kube-apiserver
+      - kube-controller-manager
+      - kube-scheduler
+      - kube-proxy
+
+  - name: Traefik
+    repo: traefik/traefik
+    cpe: traefik:traefik
+    images:
+      - traefik
+
+  - name: cert-manager
+    repo: cert-manager/cert-manager
+    cpe: cert-manager:cert-manager
+    images:
+      - jetstack/cert-manager-controller
+      - jetstack/cert-manager-webhook
+      - jetstack/cert-manager-cainjector
+
+  - name: Argo CD
+    aliases: [argocd]
+    repo: argoproj/argo-cd
+    cpe: argoproj:argo_cd
+    images:
+      - argoproj/argocd
+
+  - name: Harbor
+    repo: goharbor/harbor
+    cpe: linuxfoundation:harbor
+    images:
+      - goharbor/harbor-core
+
+  # ---- Observability and search
+
+  - name: Grafana
+    repo: grafana/grafana
+    cpe: grafana:grafana
+    images:
+      - grafana/grafana
+      - grafana/grafana-oss
+      - grafana/grafana-enterprise
+
+  - name: Prometheus
+    repo: prometheus/prometheus
+    cpe: prometheus:prometheus
+    images:
+      - prom/prometheus
+      - prometheus/prometheus
+
+  - name: Elasticsearch
+    repo: elastic/elasticsearch
+    cpe: elastic:elasticsearch
+    images:
+      - elasticsearch
+      - elasticsearch/elasticsearch
+
+  # ---- Identity and secrets
+
+  - name: Keycloak
+    repo: keycloak/keycloak
+    cpe: redhat:keycloak
+    images:
+      - keycloak/keycloak
+
+  - name: Vault
+    aliases: [hashicorp-vault]
+    repo: hashicorp/vault
+    cpe: hashicorp:vault
+    images:
+      - hashicorp/vault
+
+  # ---- AI serving
+
+  - name: Ollama
+    repo: ollama/ollama
+    cpe: ollama:ollama
+    images:
+      - ollama/ollama
+
+  - name: Open WebUI
+    aliases: [openwebui]
+    ecosystem: PyPI
+    package: open-webui
+    repo: open-webui/open-webui
+    cpe: openwebui:open_webui
+    images:
+      - open-webui/open-webui

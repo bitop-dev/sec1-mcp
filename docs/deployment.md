@@ -15,6 +15,7 @@ Both follow MCP specification revision 2026-07-28.
 
 | Flag | Environment variable | Meaning |
 | --- | --- | --- |
+| `-catalog <path>` | `SEC1_CATALOG` | A catalog file of your own products, added to the built-in catalog. See [catalog.md](catalog.md). |
 | `-http <addr>` | `SEC1_HTTP_ADDR` | Serve Streamable HTTP on this address, such as `127.0.0.1:8080`. Without it, the server uses stdio. |
 | `-http-json` | | Answer HTTP requests with plain JSON bodies instead of event streams. |
 | `-cache-dir <dir>` | | Where lookups are cached. Defaults to the user cache directory; `""` keeps the cache in memory only. |
@@ -180,6 +181,8 @@ spec:
 
 Things to decide for your cluster:
 
+- **Your own catalog.** Mount it from a ConfigMap and point `SEC1_CATALOG`
+  at the file.
 - **Outbound access.** The pod needs HTTPS to `api.osv.dev`,
   `api.github.com`, `services.nvd.nist.gov`, `www.cisa.gov`, `api.first.org`,
   `pypi.org`, `registry.npmjs.org` and `gitlab.com`. If you restrict egress,

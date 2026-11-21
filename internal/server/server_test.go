@@ -17,7 +17,7 @@ import (
 // transport, so the tests exercise the protocol and not only the handlers.
 func connect(t *testing.T, client *intel.Client) *mcp.ClientSession {
 	t.Helper()
-	products, err := catalog.New()
+	products, err := catalog.New("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func connect(t *testing.T, client *intel.Client) *mcp.ClientSession {
 func offline() *intel.Client {
 	client := intel.NewClient("")
 	client.Endpoints = intel.Endpoints{
-		OSV: "http://127.0.0.1:1", GitHub: "http://127.0.0.1:1", NVD: "http://127.0.0.1:1", KEV: "http://127.0.0.1:1",
+		OSV: "http://127.0.0.1:1", GitHub: "http://127.0.0.1:1", NVD: "http://127.0.0.1:1", NVDProducts: "http://127.0.0.1:1", KEV: "http://127.0.0.1:1",
 		EPSS: "http://127.0.0.1:1", PyPI: "http://127.0.0.1:1", NPM: "http://127.0.0.1:1", GitLab: "http://127.0.0.1:1",
 	}
 	client.RetryDelays = nil
@@ -68,7 +68,7 @@ func TestToolsAreListedReadOnlyWithSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"check_component", "check_components", "get_advisory", "resolve_component", "suggest_version"}
+	want := []string{"check_component", "check_components", "find_identifiers", "get_advisory", "resolve_component", "suggest_version"}
 	var names []string
 	for _, tool := range list.Tools {
 		names = append(names, tool.Name)
@@ -184,6 +184,7 @@ func TestLive(t *testing.T) {
 	show("suggest_version", map[string]any{"name": "LiteLLM", "version": "1.106.6"})
 	// Software outside the catalog, identified explicitly.
 	show("check_component", map[string]any{"name": "requests", "ecosystem": "PyPI", "package": "requests", "version": "2.25.0", "limit": 3})
-	show("check_component", map[string]any{"name": "Grafana", "repo": "grafana/grafana", "version": "10.0.0", "limit": 3})
+	show("check_component", map[string]any{"name": "Grafana-by-repo", "repo": "grafana/grafana", "version": "10.0.0", "limit": 20})
+	show("find_identifiers", map[string]any{"name": "redis"})
 	show("get_advisory", map[string]any{"id": "CVE-2026-42208"})
 }

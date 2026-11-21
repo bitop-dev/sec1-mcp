@@ -1,6 +1,9 @@
 package version
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func sign(t *testing.T, a, b string) int {
 	t.Helper()
@@ -100,6 +103,71 @@ func TestHighest(t *testing.T) {
 	for _, c := range cases {
 		if got := Highest(c.tags); got != c.want {
 			t.Errorf("Highest(%v) = %q, want %q", c.tags, got, c.want)
+		}
+	}
+}
+
+func TestParseRange(t *testing.T) {
+	cases := []struct {
+		text     string
+		clauses  int
+		bounded  []bool
+		contains map[string]bool // version -> in any clause
+	}{
+		{">= 0.32.0rc0, <= 0.34.0", 1, []bool{true}, map[string]bool{"0.33.0": true, "0.34.1": false}},
+		{"< 9.0.3, < 8.5.9", 2, []bool{false, false}, map[string]bool{"8.5.2": true, "9.0.3": false}},
+		{">=9.2.0 <9.2.10 >=9.3.0 <9.3.4", 2, []bool{true, true}, map[string]bool{"9.2.5": true, "9.2.10": false, "9.3.1": true}},
+		{"8.0.0 - 8.3.0", 1, []bool{true}, map[string]bool{"8.3.0": true, "8.3.1": false}},
+		{"Grafana Enterprise 8.1.0-beta1 - 8.4.5", 1, []bool{true}, map[string]bool{"8.4.5": true, "8.0.0": false}},
+		{">= v5.0.0-beta1", 1, []bool{false}, map[string]bool{"9.0.0": true, "4.9.0": false}},
+		{"< 9.0.3, < 8.3.10, >= 5.3", 2, []bool{false, true}, map[string]bool{"8.3.5": true}},
+		{"= 2.0.0", 1, []bool{true}, map[string]bool{"2.0.0": true, "2.0.1": false}},
+	}
+	for _, c := range cases {
+		clauses, ok := ParseRange(c.text)
+		if !ok || len(clauses) != c.clauses {
+			t.Errorf("ParseRange(%q) = %v, %v; want %d clauses", c.text, clauses, ok, c.clauses)
+			continue
+		}
+		for i, want := range c.bounded {
+			if clauses[i].Bounded() != want {
+				t.Errorf("ParseRange(%q) clause %d bounded = %v, want %v", c.text, i, clauses[i].Bounded(), want)
+			}
+		}
+		for v, want := range c.contains {
+			got := false
+			for _, clause := range clauses {
+				in, _ := clause.Contains(v)
+				got = got || in
+			}
+			if got != want {
+				t.Errorf("ParseRange(%q) contains %s = %v, want %v", c.text, v, got, want)
+			}
+		}
+	}
+}
+
+func TestParseRangeRefusesWhatItCannotRead(t *testing.T) {
+	for _, text := range []string{"<9.x, <8.x", "<= 9.+", "<=9.1.x, <= 8.5.x", "", "all versions"} {
+		if clauses, ok := ParseRange(text); ok {
+			t.Errorf("ParseRange(%q) = %v, want it refused", text, clauses)
+		}
+	}
+}
+
+func TestList(t *testing.T) {
+	cases := map[string][]string{
+		"9.3.2, 9.2.8, 8.5.16": {"9.3.2", "9.2.8", "8.5.16"},
+		"4.0.0+":               {"4.0.0"},
+		">= 1.2.3":             {"1.2.3"},
+		"v0.3.63":              {"v0.3.63"},
+		"":                     nil,
+		"none":                 nil,
+	}
+	for text, want := range cases {
+		got := List(text)
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("List(%q) = %v, want %v", text, got, want)
 		}
 	}
 }

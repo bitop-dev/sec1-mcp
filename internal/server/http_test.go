@@ -14,7 +14,7 @@ import (
 
 func httpServer(t *testing.T, options HTTPOptions) *httptest.Server {
 	t.Helper()
-	products, err := catalog.New()
+	products, err := catalog.New("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +47,8 @@ func resolveOverHTTP(t *testing.T, endpoint string, client *http.Client) (map[st
 	if err != nil {
 		return nil, err
 	}
-	if len(list.Tools) != 5 {
-		t.Errorf("listed %d tools over HTTP, want 5", len(list.Tools))
+	if len(list.Tools) != 6 {
+		t.Errorf("listed %d tools over HTTP, want 6", len(list.Tools))
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "resolve_component", Arguments: map[string]any{"image": "vllm/vllm-openai:v0.34.0"}})
 	if err != nil {

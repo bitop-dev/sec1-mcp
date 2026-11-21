@@ -24,20 +24,21 @@ import (
 // ever used as a host, so a caller cannot make the server fetch an arbitrary
 // address.
 type Endpoints struct {
-	OSV, GitHub, NVD, KEV, EPSS, PyPI, NPM, GitLab string
+	OSV, GitHub, NVD, NVDProducts, KEV, EPSS, PyPI, NPM, GitLab string
 }
 
 // DefaultEndpoints returns the real services.
 func DefaultEndpoints() Endpoints {
 	return Endpoints{
-		OSV:    "https://api.osv.dev",
-		GitHub: "https://api.github.com",
-		NVD:    "https://services.nvd.nist.gov/rest/json/cves/2.0",
-		KEV:    "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
-		EPSS:   "https://api.first.org/data/v1/epss",
-		PyPI:   "https://pypi.org",
-		NPM:    "https://registry.npmjs.org",
-		GitLab: "https://gitlab.com",
+		OSV:         "https://api.osv.dev",
+		GitHub:      "https://api.github.com",
+		NVD:         "https://services.nvd.nist.gov/rest/json/cves/2.0",
+		NVDProducts: "https://services.nvd.nist.gov/rest/json/cpes/2.0",
+		KEV:         "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+		EPSS:        "https://api.first.org/data/v1/epss",
+		PyPI:        "https://pypi.org",
+		NPM:         "https://registry.npmjs.org",
+		GitLab:      "https://gitlab.com",
 	}
 }
 

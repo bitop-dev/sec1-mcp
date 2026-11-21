@@ -118,6 +118,26 @@ func (c *Client) osvAdvisories(ctx context.Context, component Component) ([]Advi
 	return nil, fmt.Errorf("osv: more than %d pages of advisories; refusing to report a partial list", maxPages)
 }
 
+// osvKnownIDs returns every identifier OSV holds for the package, at any
+// version. One that OSV knows and did not return for the running version
+// does not affect that version.
+func (c *Client) osvKnownIDs(ctx context.Context, component Component) (map[string]bool, error) {
+	versionless := component
+	versionless.Version = ""
+	advisories, err := c.osvAdvisories(ctx, versionless)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, advisory := range advisories {
+		known[advisory.ID] = true
+		for _, alias := range advisory.Aliases {
+			known[alias] = true
+		}
+	}
+	return known, nil
+}
+
 // ---- GitHub: the upstream repository's own security advisories.
 
 type githubAdvisory struct {
@@ -133,31 +153,84 @@ type githubAdvisory struct {
 	} `json:"vulnerabilities"`
 }
 
-func (c *Client) githubAdvisories(ctx context.Context, component Component) ([]Advisory, error) {
+// sourceResult is what one version-aware source found.
+type sourceResult struct {
+	advisories []Advisory
+	// cleared holds identifiers of advisories the source knows about and has
+	// determined do not affect the version. A name-only match for one of
+	// them is a false alarm.
+	cleared map[string]bool
+	// detail is added to the source's coverage entry.
+	detail string
+}
+
+func (c *Client) githubAdvisories(ctx context.Context, component Component) (sourceResult, error) {
 	next := fmt.Sprintf("%s/repos/%s/security-advisories?state=published&per_page=100", c.Endpoints.GitHub, component.Repo)
-	var advisories []Advisory
+	result := sourceResult{cleared: map[string]bool{}}
+	assumedFixed := 0
 	for page := 0; next != ""; page++ {
 		if page == maxPages {
-			return nil, fmt.Errorf("github: more than %d pages of advisories; refusing to report a partial list", maxPages)
+			return result, fmt.Errorf("github: more than %d pages of advisories; refusing to report a partial list", maxPages)
 		}
 		var batch []githubAdvisory
 		var err error
 		if next, err = c.fetch(ctx, request{url: next, headers: c.githubHeaders(), ttl: ttlGitHub}, &batch); err != nil {
-			return nil, err
+			return result, err
 		}
 		for _, item := range batch {
-			advisory, applies := githubApplies(component.Version, item)
-			if applies {
-				advisories = append(advisories, advisory)
+			advisory, verdict := githubApplies(component.Version, item)
+			switch verdict {
+			case verdictApplies:
+				result.advisories = append(result.advisories, advisory)
+				continue
+			case verdictAssumedFixed:
+				assumedFixed++
+			}
+			result.cleared[item.GHSAID] = true
+			if item.CVEID != nil {
+				result.cleared[*item.CVEID] = true
 			}
 		}
 	}
-	return advisories, nil
+	if assumedFixed > 0 {
+		result.detail = fmt.Sprintf("%d advisories treated as fixed: the version is newer than every fix they publish", assumedFixed)
+	}
+	return result, nil
 }
 
-// githubApplies turns a repository advisory into an Advisory, and reports
-// false only when every affected range is known to exclude the version.
-func githubApplies(running string, item githubAdvisory) (Advisory, bool) {
+// How a repository advisory relates to the running version.
+const (
+	// verdictApplies: listed. Either it affects the version, or that could
+	// not be ruled out.
+	verdictApplies = iota
+	// verdictNotAffected: the published ranges exclude the version, or a fix
+	// is published on its release line at or below it.
+	verdictNotAffected
+	// verdictAssumedFixed: no range excludes the version, but it is newer
+	// than every fix the advisory publishes. This assumes fixes are carried
+	// forward into later releases, so it is counted and reported.
+	verdictAssumedFixed
+)
+
+// githubApplies turns a repository advisory into an Advisory and decides
+// whether it applies to the running version.
+//
+// Project advisories are free text, and many give only where a flaw starts
+// (">= 9.2.0") beside the version that fixes it. Read literally, that range
+// covers every later release for ever. So the decision uses the published
+// fixes as well as the ranges, in this order:
+//
+//  1. A fix published on the version's release line: the version is fixed
+//     if it is at or above the highest such fix.
+//  2. A range bounded on both sides that contains the version: it applies,
+//     unless rule 1 found a fix and the range does not start after it. A
+//     range that starts after the fix says the flaw came back.
+//  3. No fix on its line, and the version is newer than every published
+//     fix: assumed fixed.
+//  4. Otherwise an open-ended range that contains the version applies.
+//  5. If no range contains it and all could be read, it does not apply. If
+//     some range could not be read, it is listed with a note.
+func githubApplies(running string, item githubAdvisory) (Advisory, int) {
 	advisory := Advisory{
 		ID:       item.GHSAID,
 		Title:    clean(item.Summary, titleLimit),
@@ -175,73 +248,87 @@ func githubApplies(running string, item githubAdvisory) (Advisory, bool) {
 		advisory.Published = *item.PublishedAt
 	}
 
-	var allFixed, affectedFixed []string
-	affected, undetermined := false, len(item.Vulnerabilities) == 0
-	for i, entry := range item.Vulnerabilities {
-		patched := ""
+	var fixes []string
+	var clauses []version.Clause
+	unreadable := len(item.Vulnerabilities) == 0
+	for _, entry := range item.Vulnerabilities {
 		if entry.Patched != nil {
-			patched = *entry.Patched
+			fixes = appendUnique(fixes, version.List(*entry.Patched)...)
 		}
-		allFixed = appendUnique(allFixed, patched)
-		if running == "" || entry.Range == nil {
-			undetermined = true
+		if entry.Range == nil {
+			unreadable = true
 			continue
 		}
-		inRange, known := version.Satisfies(running, *entry.Range)
-		switch {
-		case !known:
-			undetermined = true
-		case inRange && backported(running, item, i):
-			// Fixed on this release line; the open-ended range is for a later one.
-		case inRange:
-			affected = true
-			affectedFixed = appendUnique(affectedFixed, patched)
+		parsed, ok := version.ParseRange(*entry.Range)
+		if !ok {
+			unreadable = true
+			continue
+		}
+		clauses = append(clauses, parsed...)
+	}
+	advisory.FixedIn = fixes
+
+	if running == "" {
+		advisory.Note = noVersionNote
+		return advisory, verdictApplies
+	}
+	if !version.Valid(running) {
+		advisory.Note = "The version could not be compared with the affected range; check it by hand."
+		return advisory, verdictApplies
+	}
+
+	lineFix, highestFix := "", ""
+	for _, fix := range fixes {
+		if highestFix == "" || isAbove(fix, highestFix) {
+			highestFix = fix
+		}
+		if version.SameLine(running, fix) && (lineFix == "" || isAbove(fix, lineFix)) {
+			lineFix = fix
 		}
 	}
-	switch {
-	case affected:
-		advisory.FixedIn = affectedFixed
-	case running == "":
-		advisory.FixedIn = allFixed
-		advisory.Note = noVersionNote
-	case undetermined:
-		advisory.FixedIn = allFixed
-		advisory.Note = "The affected range could not be compared with the version; check it by hand."
-	default:
-		return advisory, false
+	fixedOnLine := lineFix != "" && !isAbove(lineFix, running)
+
+	inOpenRange := false
+	for _, clause := range clauses {
+		if in, _ := clause.Contains(running); !in {
+			continue
+		}
+		if !clause.Bounded() {
+			inOpenRange = true
+			continue
+		}
+		// A bounded range often spans several release lines, each with its
+		// own backported fix, so a fix on this line still counts. It does
+		// not when the range starts after that fix: that says the flaw came
+		// back.
+		startsAfterFix := fixedOnLine && clause.LowerBound() != "" && isAbove(clause.LowerBound(), lineFix)
+		if !fixedOnLine || startsAfterFix {
+			return advisory, verdictApplies
+		}
 	}
-	return advisory, true
+
+	switch {
+	case fixedOnLine:
+		return advisory, verdictNotAffected
+	case lineFix == "" && highestFix != "" && isAbove(running, highestFix):
+		return advisory, verdictAssumedFixed
+	case inOpenRange:
+		if len(fixes) == 0 {
+			advisory.Note = "The advisory gives where the flaw starts but no fixed version, so it may be long fixed; check it by hand."
+		}
+		return advisory, verdictApplies
+	case unreadable:
+		advisory.Note = "The affected range could not be read; check it by hand."
+		return advisory, verdictApplies
+	}
+	return advisory, verdictNotAffected
 }
 
-// backported reports whether the running version already has the fix even
-// though it falls inside entry i's range.
-//
-// Projects that backport a fix often list one open-ended range per release
-// line: "< 1.106.9" and "< 1.108.6". Read literally, the second says 1.106.12
-// is vulnerable, although the first fixed it on that line. So an open-ended
-// range is set aside when another entry of the same advisory publishes a fix
-// on the running version's release line at or below it. A range with a lower
-// bound is always taken as written.
-func backported(running string, item githubAdvisory, i int) bool {
-	constraint := strings.TrimSpace(*item.Vulnerabilities[i].Range)
-	if strings.Contains(constraint, ",") || !strings.HasPrefix(constraint, "<") {
-		return false
-	}
-	for j, other := range item.Vulnerabilities {
-		if j == i || other.Patched == nil {
-			continue
-		}
-		for _, fix := range strings.Split(*other.Patched, ",") {
-			fix = strings.TrimSpace(fix)
-			if !version.SameLine(running, fix) {
-				continue
-			}
-			if comparison, ok := version.Compare(running, fix); ok && comparison >= 0 {
-				return true
-			}
-		}
-	}
-	return false
+// isAbove reports whether a is a higher version than b. Both are known to
+// parse.
+func isAbove(a, b string) bool {
+	comparison, ok := version.Compare(a, b)
+	return ok && comparison > 0
 }
 
 // ---- NVD: products with no registry package, matched through their CPE.

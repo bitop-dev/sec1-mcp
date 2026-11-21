@@ -10,8 +10,13 @@ The first version. Nothing has been tagged yet; these entries become 0.1.0.
 
 ### Added
 
-- Five read-only tools: `check_component`, `check_components`,
-  `suggest_version`, `get_advisory` and `resolve_component`.
+- Six read-only tools: `check_component`, `check_components`,
+  `suggest_version`, `get_advisory`, `resolve_component` and
+  `find_identifiers`.
+- `find_identifiers` searches PyPI, npm, GitHub and NVD for a product the
+  catalog does not know and returns candidates to confirm. It applies none.
+- A catalog file of your own (`-catalog`, `SEC1_CATALOG`), validated at
+  start-up, that adds products or replaces built-in ones.
 - Components can be identified by product name, by container image
   reference (the product comes from the repository, the version from the
   tag), or by explicit identifiers: registry package, GitHub repository or
@@ -24,12 +29,25 @@ The first version. Nothing has been tagged yet; these entries become 0.1.0.
   `coverage` list saying what each source did.
 - Upgrade suggestions that re-check the suggested version against every
   source before calling it clean.
-- A built-in catalog covering LiteLLM, vLLM, GitLab and Onyx.
+- A built-in catalog of 21 products, each identifier checked against
+  GitHub, NVD and the image registries: LiteLLM, vLLM, GitLab, Onyx,
+  PostgreSQL, Redis, Valkey, nginx, ingress-nginx, Kubernetes, Traefik,
+  cert-manager, Argo CD, Harbor, Grafana, Prometheus, Elasticsearch,
+  Keycloak, Vault, Ollama and Open WebUI.
+- Handling for the free-text version ranges that project advisories use:
+  hyphen ranges, several ranges with no separator, start-only ranges, and
+  fixes backported to more than one release line.
+- Name-only matches from the exploited list are dropped when the upstream
+  repository, OSV or NVD shows the version is not affected.
 - stdio and Streamable HTTP transports, following MCP specification revision
   2026-07-28. The HTTP transport has optional bearer-token authentication, a
   `/healthz` endpoint, and a plain-JSON response mode.
 - Response caching in memory and on disk, and request pacing for NVD.
 - A container image, built for `linux/amd64` and `linux/arm64`.
+
+- Official container images, such as `postgres`, match only under their own
+  name or `library/`, so another publisher's image of the same name is not
+  mistaken for them.
 
 ### Security
 

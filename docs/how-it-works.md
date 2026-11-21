@@ -44,32 +44,58 @@ to thousands of CVEs.
 CISA's catalog names a product but no versions. A match on name alone would
 flag old, long-fixed vulnerabilities as urgent on every check.
 
-So when the component has a version and an NVD product identifier, the
-server asks NVD which exploited CVEs it holds version data for. One that NVD
-has version data for, and did not return for the running version, does not
-affect that version and is dropped. The `coverage` entry for `cisa-kev` says
-how many were dropped.
+So when a version is given, a name-only match is dropped if a source that
+holds version data for that CVE has shown the version is not affected:
+
+- the upstream repository's own advisory for the CVE excludes the version;
+- OSV knows the CVE for the package and did not return it for the version;
+- NVD holds version ranges for the CVE under this product and did not return
+  it for the version.
+
+The `coverage` entry for `cisa-kev` says how many were dropped.
 
 A match that cannot be cleared this way is kept, marked `nameOnly`, with a
 note that the version was not checked. If only name-only matches remain, the
 status is `possibly_affected`.
 
-### Backported fixes
+### Project advisories and free-text ranges
 
-Some projects list one open-ended range per release line: `< 1.106.9` and
-`< 1.108.6`. Read literally, the second says 1.106.12 is vulnerable, although
-the first fixed it on that line.
+Advisories published by a project on its own repository are free text, and
+their affected ranges come in many styles:
 
-The server sets an open-ended range aside when the same advisory publishes a
-fix on the running version's release line (the same major and minor numbers)
-at or below it. A range with a lower bound is always taken as written.
+| As written | Meaning |
+| --- | --- |
+| `< 1.106.9` and `< 1.108.6` | One open-ended range per release line. |
+| `>= 9.2.0`, fixed in `9.2.4` | Only where the flaw starts. |
+| `8.0.0 - 8.3.0` | A hyphen range, often spanning several lines. |
+| `>=9.2.0 <9.2.10 >=9.3.0 <9.3.4` | Two ranges with no separator. |
+| `<9.x, <8.x` | Wildcards, which cannot be compared. |
+
+Read literally, `>= 9.2.0` covers every later release for ever, and
+`< 1.108.6` says 1.106.12 is vulnerable although 1.106.9 fixed it on that
+line. So the server uses the published fixes as well as the ranges, in this
+order:
+
+1. **A fix on the version's release line** (the same major and minor
+   numbers): the version is fixed if it is at or above the highest such fix.
+2. **A range bounded on both sides that contains the version** applies,
+   unless rule 1 found a fix and the range does not start after it. A range
+   that starts after the fix says the flaw came back, and is taken as
+   written.
+3. **No fix on its line, and the version is newer than every published
+   fix:** treated as fixed. This assumes a fix is carried forward into later
+   releases. It is the one assumption in the list, so the `coverage` entry
+   for `github` reports how many advisories it was applied to.
+4. **An open-ended range that contains the version** applies. If the
+   advisory publishes no fix at all, the `note` says it may be long fixed.
+5. **Otherwise** it does not apply, if every range could be read. If one
+   could not, the advisory is kept with a note saying so.
 
 ### Version comparison
 
 Versions are compared as dotted numbers with an optional pre-release or
 post-release suffix. When a version or a range cannot be parsed, the server
-does not guess: the advisory is kept, with a note that the range could not
-be compared.
+does not guess: the advisory is kept, with a note.
 
 ## Status
 
@@ -133,7 +159,7 @@ a dropped call.
 - **Scan images.** It reports a product's own advisories, not those of the
   libraries and operating system packages bundled with it.
 - **Guess.** A name outside the catalog is unrecognised until identifiers
-  are given.
+  are given. `find_identifiers` returns candidates and applies none.
 - **Judge configuration.** Whether a vulnerable feature is switched on, or
   an endpoint is reachable, is outside what advisory data can say.
 - **Change anything.** Every tool is read-only.

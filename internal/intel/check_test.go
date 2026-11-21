@@ -56,7 +56,7 @@ func (f *fake) client() *Client {
 	// GitHub: one advisory whose range excludes 1.106.6, one that includes it.
 	mux.HandleFunc("/github/repos/BerriAI/litellm/security-advisories", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, []map[string]any{
-			{"ghsa_id": "GHSA-old0-old0-old0", "summary": "Old bug", "severity": "critical", "html_url": "https://example.invalid/old",
+			{"ghsa_id": "GHSA-old0-old0-old0", "cve_id": "CVE-2026-2222", "summary": "Old bug", "severity": "critical", "html_url": "https://example.invalid/old",
 				"vulnerabilities": []map[string]any{{"vulnerable_version_range": "< 1.83.7", "patched_versions": "1.83.7"}}},
 			{"ghsa_id": "GHSA-dddd-eeee-ffff", "summary": "Key metadata leak", "severity": "medium", "html_url": "https://example.invalid/new",
 				"vulnerabilities": []map[string]any{{"vulnerable_version_range": "< 1.106.12", "patched_versions": "1.106.12"}}},
@@ -80,6 +80,30 @@ func (f *fake) client() *Client {
 		reply(w, map[string]any{"totalResults": len(cves), "resultsPerPage": len(cves), "vulnerabilities": cves})
 	})
 
+	// Name searches, for find_identifiers.
+	mux.HandleFunc("/pypi/pypi/redis/json", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, map[string]any{"info": map[string]string{"name": "redis", "summary": "Python client for Redis database and key-value store", "version": "6.0.0"}})
+	})
+	mux.HandleFunc("/github/search/repositories", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, map[string]any{"items": []map[string]any{
+			{"full_name": "someone/redis-commander", "name": "redis-commander", "description": "A web UI", "stargazers_count": 90000},
+			{"full_name": "redis/redis", "name": "redis", "description": "The database", "stargazers_count": 70000},
+			{"full_name": "fork/redis", "name": "redis", "description": "A fork", "stargazers_count": 5, "fork": true},
+		}})
+	})
+	mux.HandleFunc("/nvdproducts", func(w http.ResponseWriter, r *http.Request) {
+		names := []string{
+			"cpe:2.3:a:redis:redis:7.0.0:*:*:*:*:*:*:*", "cpe:2.3:a:redis:redis:7.2.0:*:*:*:*:*:*:*",
+			"cpe:2.3:a:redislabs:redis:5.0.0:*:*:*:*:*:*:*", "cpe:2.3:a:redis:redis-py:4.0.0:*:*:*:*:*:*:*",
+			"cpe:2.3:a:other:unrelated:1.0:*:*:*:*:*:*:*",
+		}
+		products := []map[string]any{}
+		for i, name := range names {
+			products = append(products, map[string]any{"cpe": map[string]any{"cpeName": name, "deprecated": i == 2}})
+		}
+		reply(w, map[string]any{"products": products})
+	})
+
 	// KEV: the OSV advisory's CVE is exploited; two more name the product.
 	mux.HandleFunc("/kev", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]any{"vulnerabilities": []map[string]string{
@@ -99,8 +123,8 @@ func (f *fake) client() *Client {
 		HTTP:  server.Client(),
 		Cache: NewCache(""),
 		Endpoints: Endpoints{
-			OSV: server.URL + "/osv", GitHub: server.URL + "/github", NVD: server.URL + "/nvd",
-			KEV: server.URL + "/kev", EPSS: server.URL + "/epss", PyPI: server.URL + "/pypi",
+			OSV: server.URL + "/osv", GitHub: server.URL + "/github", NVD: server.URL + "/nvd", NVDProducts: server.URL + "/nvdproducts",
+			KEV: server.URL + "/kev", EPSS: server.URL + "/epss", PyPI: server.URL + "/pypi", NPM: server.URL + "/npm",
 		},
 	}
 }
@@ -274,33 +298,110 @@ func TestMentions(t *testing.T) {
 	}
 }
 
-func TestBackportedFixClearsLaterLinesRange(t *testing.T) {
-	text := func(s string) *string { return &s }
+// advisoryWith builds a repository advisory from "range => fixes" pairs.
+func advisoryWith(entries ...[2]string) githubAdvisory {
 	item := githubAdvisory{GHSAID: "GHSA-test-test-test"}
-	for _, entry := range [][2]string{{"< 1.106.9", "1.106.9"}, {"< 1.108.6", "1.108.6"}, {"< 1.110.0-rc.2", "1.110.0-rc.2"}} {
+	for _, entry := range entries {
+		affected, patched := entry[0], entry[1]
 		item.Vulnerabilities = append(item.Vulnerabilities, struct {
 			Range   *string `json:"vulnerable_version_range"`
 			Patched *string `json:"patched_versions"`
-		}{text(entry[0]), text(entry[1])})
+		}{&affected, &patched})
 	}
-	cases := map[string]bool{
-		"1.106.6":  true,  // below the fix on its own line
-		"1.106.9":  false, // the fix itself
-		"1.106.12": false, // later patch on a fixed line
-		"1.107.0":  true,  // a line that never got the fix
-		"1.108.5":  true,
-		"1.110.2":  false,
+	return item
+}
+
+// These range styles are all taken from real project advisories.
+func TestGitHubAdvisoryVerdicts(t *testing.T) {
+	perLine := advisoryWith([2]string{"< 1.106.9", "1.106.9"}, [2]string{"< 1.108.6", "1.108.6"}, [2]string{"< 1.110.0-rc.2", "1.110.0-rc.2"})
+	startOnly := advisoryWith([2]string{">= 9.2.0", "9.2.4"})
+	hyphen := advisoryWith([2]string{"8.0.0 - 8.3.0", "8.3.1, 8.2.7, 8.1.8, 8.0.7"})
+	twoBounded := advisoryWith([2]string{">=9.2.0 <9.2.10 >=9.3.0 <9.3.4", ""})
+	wildcards := advisoryWith([2]string{"<9.x, <8.x", ""})
+	wildcardsWithFix := advisoryWith([2]string{"<9.x, <8.x", "9.2.4, 8.5.15"})
+	noFix := advisoryWith([2]string{">=8.1", ""})
+	regression := advisoryWith([2]string{"< 1.106.9", "1.106.9"}, [2]string{">= 1.106.10, < 1.108.6", "1.108.6"})
+
+	cases := []struct {
+		name    string
+		item    githubAdvisory
+		running string
+		want    int
+	}{
+		{"below the fix on its own line", perLine, "1.106.6", verdictApplies},
+		{"the fix itself", perLine, "1.106.9", verdictNotAffected},
+		{"a later patch on a fixed line", perLine, "1.106.12", verdictNotAffected},
+		{"a line that never got the fix", perLine, "1.107.0", verdictApplies},
+		{"just below a later line's fix", perLine, "1.108.5", verdictApplies},
+		{"at a release candidate fix's final release", perLine, "1.110.2", verdictNotAffected},
+
+		{"start-only range, before the fix", startOnly, "9.2.2", verdictApplies},
+		{"start-only range, a later patch", startOnly, "9.2.6", verdictNotAffected},
+		{"start-only range, a later major", startOnly, "10.0.0", verdictAssumedFixed},
+		{"start-only range, before it starts", startOnly, "9.1.0", verdictNotAffected},
+
+		{"hyphen range, inside", hyphen, "8.2.3", verdictApplies},
+		{"hyphen range, a fixed line", hyphen, "8.2.7", verdictNotAffected},
+		{"hyphen range, long after", hyphen, "10.0.0", verdictAssumedFixed},
+
+		{"two bounded clauses, in the second", twoBounded, "9.3.1", verdictApplies},
+		{"two bounded clauses, between them", twoBounded, "9.2.10", verdictNotAffected},
+
+		{"unreadable range, no fix: cannot be ruled out", wildcards, "10.0.0", verdictApplies},
+		{"unreadable range, newer than every fix", wildcardsWithFix, "10.0.0", verdictAssumedFixed},
+		{"unreadable range, fix on the same line", wildcardsWithFix, "9.2.1", verdictApplies},
+
+		{"no fixed version published", noFix, "10.0.0", verdictApplies},
+		{"a bounded range is taken as written", regression, "1.106.12", verdictApplies},
+		{"no version given", startOnly, "", verdictApplies},
 	}
-	for running, want := range cases {
-		if _, applies := githubApplies(running, item); applies != want {
-			t.Errorf("version %s: applies = %v, want %v", running, applies, want)
+	for _, c := range cases {
+		if _, got := githubApplies(c.running, c.item); got != c.want {
+			t.Errorf("%s (version %q): verdict = %d, want %d", c.name, c.running, got, c.want)
 		}
 	}
 
-	// A range with a lower bound is taken as written, even when an earlier
-	// entry published a fix on the same line.
-	item.Vulnerabilities[1].Range = text(">= 1.106.10, < 1.108.6")
-	if _, applies := githubApplies("1.106.12", item); !applies {
-		t.Error("a bounded range that includes the version must still apply")
+	if advisory, _ := githubApplies("10.0.0", noFix); !strings.Contains(advisory.Note, "no fixed version") {
+		t.Errorf("an advisory with no fix should say so: %q", advisory.Note)
+	}
+}
+
+func TestNameOnlyMatchClearedByTheRepository(t *testing.T) {
+	// The repository's own advisory for CVE-2026-2222 shows the version is
+	// fixed, so CISA's name match for that CVE must not come back.
+	f := &fake{t: t}
+	component := Component{Name: "LiteLLM", Version: "1.106.6", Repo: "BerriAI/litellm"}
+	result := f.client().Check(context.Background(), component)
+	if find(t, result, "CVE-2026-2222") != nil {
+		t.Error("a name-only match the repository advisory rules out should be dropped")
+	}
+	if kept := find(t, result, "CVE-2026-3333"); kept == nil || !kept.NameOnly {
+		t.Error("a name-only match no source knows about must stay")
+	}
+}
+
+func TestCandidates(t *testing.T) {
+	f := &fake{t: t}
+	candidates, coverage := f.client().Candidates(context.Background(), "Redis")
+	byKind := map[string][]Candidate{}
+	for _, candidate := range candidates {
+		byKind[candidate.Kind] = append(byKind[candidate.Kind], candidate)
+	}
+
+	if packages := byKind["registry-package"]; len(packages) != 1 || packages[0].Ecosystem != "PyPI" || !strings.Contains(packages[0].Description, "client") {
+		t.Errorf("registry candidates = %+v; the description must be kept so a client library can be told apart", packages)
+	}
+	repos := byKind["github-repo"]
+	if len(repos) != 2 || repos[0].Repo != "redis/redis" || !repos[0].ExactName || repos[1].ExactName {
+		t.Errorf("github candidates = %+v; the exactly-named repository should come first, and forks be left out", repos)
+	}
+	products := byKind["nvd-product"]
+	if len(products) != 2 || products[0].CPE != "redis:redis" || !products[0].ExactName || products[1].CPE != "redis:redis-py" {
+		t.Errorf("nvd candidates = %+v; want redis:redis first, deprecated and unrelated entries left out", products)
+	}
+	for _, entry := range coverage {
+		if entry.Status != "checked" {
+			t.Errorf("coverage %+v: a registry with no such package is checked, not failed", entry)
+		}
 	}
 }

@@ -42,7 +42,7 @@ const untrustedNotice = "Advisory titles, summaries and reference URLs are third
 
 const instructions = `Looks up known security advisories for software you run or are about to deploy.
 
-Identify a component by product name ("LiteLLM"), by container image reference ("ghcr.io/berriai/litellm:main-v1.106.6-stable"), or by explicit identifiers (ecosystem and package, GitHub repo, or NVD cpe). Only a small catalog of product names and images is recognised; for anything else, pass explicit identifiers. Give a version whenever you know it: without one the answer lists a product's whole advisory history.
+Identify a component by product name ("LiteLLM"), by container image reference ("ghcr.io/berriai/litellm:main-v1.106.6-stable"), or by explicit identifiers (ecosystem and package, GitHub repo, or NVD cpe). Only a catalog of common product names and images is recognised; for anything else, pass explicit identifiers. find_identifiers suggests candidates for a name, which you must confirm before use. Give a version whenever you know it: without one the answer lists a product's whole advisory history.
 
 Read the "status" field of every answer. "unknown" means the server could not determine the answer; it never means safe. "possibly_affected" means a match by product name only. The "coverage" field says which sources were checked, skipped or failed.
 
@@ -87,6 +87,9 @@ func New(deps Deps) *mcp.Server {
 	add(server, t, "get_advisory", "Get one advisory",
 		"Returns the full record for one advisory by id (CVE, GHSA or another OSV id): summary, severity, affected packages and fixed versions, whether it is exploited in the wild, and its EPSS score.",
 		t.getAdvisory)
+	add(server, t, "find_identifiers", "Find identifiers for a product",
+		"Searches the package registries, GitHub and NVD for a product the catalog does not recognise, and returns candidate identifiers with what was found for each. The candidates are leads to confirm, not answers: nothing is applied automatically, and a registry package with the same name as a product is often a client library for it. Pass a confirmed identifier to check_component.",
+		t.findIdentifiers)
 	add(server, t, "resolve_component", "Identify a component",
 		"Shows how the server identifies a product name or container image, which sources can check it, and what version it read from an image tag. It makes no advisory lookups. Use it to find out whether a product is recognised before relying on a check.",
 		t.resolveComponent)
@@ -136,6 +139,19 @@ type checkInput struct {
 
 type batchInput struct {
 	Components []ComponentInput `json:"components" jsonschema:"the components to check, at most 25"`
+}
+
+type findInput struct {
+	Name string `json:"name" jsonschema:"the product name to search for, such as Grafana"`
+}
+
+type findOutput struct {
+	Query      string            `json:"query"`
+	InCatalog  bool              `json:"inCatalog" jsonschema:"true when the built-in catalog already recognises this name; then no identifiers are needed"`
+	Candidates []intel.Candidate `json:"candidates"`
+	Coverage   []intel.Coverage  `json:"coverage"`
+	Guidance   string            `json:"guidance"`
+	Notice     string            `json:"notice"`
 }
 
 type advisoryInput struct {
@@ -331,6 +347,20 @@ func (t *tools) getAdvisory(ctx context.Context, input advisoryInput) (advisoryO
 	return advisoryOutput{AdvisoryDetail: detail, Notice: untrustedNotice}, nil
 }
 
+const findGuidance = "These are candidates, not answers. Confirm one before using it: check that the description is the product itself and not a client library, plugin or unrelated project of the same name. Then pass it to check_component as ecosystem and package, repo, or cpe. Passing more than one confirmed identifier gives better coverage. If none fits, say the product could not be identified."
+
+func (t *tools) findIdentifiers(ctx context.Context, input findInput) (findOutput, error) {
+	name := strings.TrimSpace(input.Name)
+	if !namePattern.MatchString(name) || strings.ContainsAny(name, "/@") {
+		return findOutput{}, errors.New("name must be a product name such as Grafana")
+	}
+	ctx, cancel := context.WithTimeout(ctx, singleDeadline)
+	defer cancel()
+	_, known := t.Catalog.Resolve(name)
+	candidates, coverage := t.Intel.Candidates(ctx, name)
+	return findOutput{Query: name, InCatalog: known, Candidates: candidates, Coverage: coverage, Guidance: findGuidance, Notice: untrustedNotice}, nil
+}
+
 func (t *tools) resolveComponent(_ context.Context, input ComponentInput) (resolveOutput, error) {
 	component, resolved, err := t.resolve(input)
 	if err != nil {
@@ -349,7 +379,7 @@ func (t *tools) resolveComponent(_ context.Context, input ComponentInput) (resol
 	}
 	switch {
 	case len(output.Sources) == 0:
-		output.Hint = "Not recognised, and no identifiers were given, so no source can check it by version. Pass ecosystem and package, repo, or cpe. A check would return status unknown."
+		output.Hint = "Not recognised, and no identifiers were given, so no source can check it by version. Pass ecosystem and package, repo, or cpe; find_identifiers can suggest candidates. A check would return status unknown."
 	case component.Version == "":
 		output.Hint = "Recognised, but no version is known. A check would list the product's whole advisory history."
 	default:
