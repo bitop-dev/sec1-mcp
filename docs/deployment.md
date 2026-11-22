@@ -95,7 +95,7 @@ Images are published to the GitHub Container Registry for `linux/amd64` and
 
 | Tag | Built from |
 | --- | --- |
-| `0.2.0`, `0.2`, `latest` | A release. `0.2` follows the newest 0.2 release, and `latest` the newest of all. |
+| `0.3.0`, `0.3`, `latest` | A release. `0.3` follows the newest 0.3 release, and `latest` the newest of all. |
 | `main` | The latest commit on `main`, which may be ahead of the release. |
 | `sha-<commit>` | One specific commit. |
 
@@ -159,7 +159,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: sec1-mcp
-          image: ghcr.io/bitop-dev/sec1-mcp:0.2.0
+          image: ghcr.io/bitop-dev/sec1-mcp:0.3.0
           args: ["-http", "0.0.0.0:8080"]
           ports:
             - {name: http, containerPort: 8080}

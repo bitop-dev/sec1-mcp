@@ -32,7 +32,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: sec1-mcp
-          image: ghcr.io/bitop-dev/sec1-mcp:latest   # pin a version tag in production
+          image: ghcr.io/bitop-dev/sec1-mcp:0.3.0
           args: ["-log-format", "json"]
           env:
             - {name: SEC1_HTTP_ADDR, value: "0.0.0.0:8080"}
