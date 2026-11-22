@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -18,9 +19,22 @@ import (
 	"github.com/bitop-dev/sec1-mcp/internal/intel"
 )
 
-// Version is the server's own version, reported to clients. Release builds
-// set it with -ldflags "-X .../internal/server.Version=...".
-var Version = "0.1.0-dev"
+// Version is set at build time for container images, with
+// -ldflags "-X .../internal/server.Version=...". Use BuildVersion to read it.
+var Version = ""
+
+// BuildVersion is the server's own version, as reported to clients. When the
+// binary was not given one at build time, it falls back to the module version
+// Go records for `go install ...@v1.2.3`, and to "dev" for a local build.
+func BuildVersion() string {
+	if Version != "" {
+		return strings.TrimPrefix(Version, "v")
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return strings.TrimPrefix(info.Main.Version, "v")
+	}
+	return "dev"
+}
 
 const (
 	// Deadlines sit below the timeouts MCP clients commonly apply, so the
@@ -66,7 +80,7 @@ func New(deps Deps) *mcp.Server {
 		Name:        "sec1-stack-watch",
 		Title:       "Stack security watch",
 		Description: "Known security advisories for the software you run, by product, version or container image.",
-		Version:     Version,
+		Version:     BuildVersion(),
 	}, &mcp.ServerOptions{
 		Instructions: instructions,
 		// The tool list never changes while the server runs, and the logging

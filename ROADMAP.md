@@ -9,7 +9,7 @@ multiplies whatever inaccuracy is left in the answers.
 
 ## 1. Trustworthy answers
 
-Done, apart from the release:
+Done, and released as 0.1.0:
 
 - [x] Verify the catalog's image names against the registries.
 - [x] Grow the catalog to the infrastructure most teams run. It now covers
@@ -21,8 +21,8 @@ Done, apart from the release:
   OSV or NVD rules out.
 - [x] `find_identifiers`, which proposes identifiers for a product the
   catalog does not know and applies none of them.
-- [ ] **Release 0.1.0**, so there are versioned container images and a
-  stable install target.
+- [x] Release 0.1.0, so there are versioned container images and a stable
+  install target.
 
 Still open here:
 

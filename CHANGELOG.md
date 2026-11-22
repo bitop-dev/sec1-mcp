@@ -6,7 +6,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The first version. Nothing has been tagged yet; these entries become 0.1.0.
+## [0.1.0] - 2026-11-21
+
+The first release.
 
 ### Added
 
@@ -58,3 +60,6 @@ The first version. Nothing has been tagged yet; these entries become 0.1.0.
   length, and labelled as untrusted in the tool schemas.
 - Credentials are read from the environment only and are never logged or
   cached.
+
+[Unreleased]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/bitop-dev/sec1-mcp/releases/tag/v0.1.0

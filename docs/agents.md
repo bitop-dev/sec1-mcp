@@ -33,7 +33,7 @@ To run it from the container image instead of a local build, keep stdin open
 with `-i`:
 
 ```sh
-claude mcp add sec1 -- docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:main
+claude mcp add sec1 -- docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:latest
 ```
 
 ### HTTP: the agent connects to a running server

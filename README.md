@@ -47,7 +47,7 @@ go build -o bin/sec1-mcp .
 Or use the container image:
 
 ```sh
-docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:main
+docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:latest
 ```
 
 Then register it with your agent. For Claude Code:

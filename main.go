@@ -45,7 +45,7 @@ func run() error {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println(server.Version)
+		fmt.Println(server.BuildVersion())
 		return nil
 	}
 

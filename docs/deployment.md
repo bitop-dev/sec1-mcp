@@ -84,8 +84,8 @@ Images are published to the GitHub Container Registry for `linux/amd64` and
 
 | Tag | Built from |
 | --- | --- |
-| `main` | The latest commit on `main`. |
-| `1.2.3`, `1.2`, `latest` | Version tags, once a release has been made. |
+| `0.1.0`, `0.1`, `latest` | A release. `latest` is the newest one. |
+| `main` | The latest commit on `main`, which may be ahead of the release. |
 | `sha-<commit>` | One specific commit. |
 
 The image holds a single static binary on a base with no shell or package
@@ -94,7 +94,7 @@ manager, and runs as an unprivileged user.
 stdio, for an agent on the same machine:
 
 ```sh
-docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:main
+docker run -i --rm ghcr.io/bitop-dev/sec1-mcp:latest
 ```
 
 HTTP. Inside a container the server must listen on all interfaces for the
@@ -103,7 +103,7 @@ published port to reach it:
 ```sh
 docker run -d --name sec1-mcp -p 127.0.0.1:8080:8080 \
   -e SEC1_HTTP_TOKEN \
-  ghcr.io/bitop-dev/sec1-mcp:main -http 0.0.0.0:8080
+  ghcr.io/bitop-dev/sec1-mcp:latest -http 0.0.0.0:8080
 ```
 
 To build the image yourself:
@@ -144,7 +144,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: sec1-mcp
-          image: ghcr.io/bitop-dev/sec1-mcp:main
+          image: ghcr.io/bitop-dev/sec1-mcp:0.1.0
           args: ["-http", "0.0.0.0:8080"]
           ports:
             - {name: http, containerPort: 8080}
@@ -194,5 +194,5 @@ Things to decide for your cluster:
   replica keeps its own cache and its own NVD queue, so more replicas use up
   the NVD and GitHub rate limits faster. Set `NVD_API_KEY` and
   `GITHUB_TOKEN` if you scale out.
-- **Pin the image.** `main` moves. Use a version tag or a digest once a
-  release exists.
+- **Pin the image.** `latest` and `main` move. Use a version tag, as above,
+  or a digest.
