@@ -113,7 +113,7 @@ func TestHTTPResponseKinds(t *testing.T) {
 }
 
 func TestHTTPGetIsNotAllowedAndHealthIsOpen(t *testing.T) {
-	served := httpServer(t, HTTPOptions{Token: "s3cret"})
+	served := httpServer(t, HTTPOptions{Tokens: tokens(t, "s3cret-s3cret-s3cret", "")})
 	get := func(path string) int {
 		response, err := http.Get(served.URL + path)
 		if err != nil {
@@ -131,14 +131,14 @@ func TestHTTPGetIsNotAllowedAndHealthIsOpen(t *testing.T) {
 }
 
 func TestHTTPToken(t *testing.T) {
-	served := httpServer(t, HTTPOptions{Token: "s3cret"})
+	served := httpServer(t, HTTPOptions{Tokens: tokens(t, "s3cret-s3cret-s3cret", "")})
 	if _, err := resolveOverHTTP(t, served.URL+"/mcp", nil); err == nil {
 		t.Error("a client with no token should be refused")
 	}
 	if _, err := resolveOverHTTP(t, served.URL+"/mcp", &http.Client{Transport: bearer{"wrong"}}); err == nil {
 		t.Error("a client with the wrong token should be refused")
 	}
-	if _, err := resolveOverHTTP(t, served.URL+"/mcp", &http.Client{Transport: bearer{"s3cret"}}); err != nil {
+	if _, err := resolveOverHTTP(t, served.URL+"/mcp", &http.Client{Transport: bearer{"s3cret-s3cret-s3cret"}}); err != nil {
 		t.Errorf("a client with the right token was refused: %v", err)
 	}
 }

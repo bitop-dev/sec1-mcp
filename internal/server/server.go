@@ -17,6 +17,7 @@ import (
 
 	"github.com/bitop-dev/sec1-mcp/internal/catalog"
 	"github.com/bitop-dev/sec1-mcp/internal/intel"
+	"github.com/bitop-dev/sec1-mcp/internal/metrics"
 )
 
 // Version is set at build time for container images, with
@@ -73,6 +74,8 @@ type Deps struct {
 	Intel   *intel.Client
 	Catalog *catalog.Catalog
 	Logger  *slog.Logger
+	// Metrics may be nil, in which case nothing is recorded.
+	Metrics *metrics.Registry
 }
 
 // New returns the MCP server with all tools registered.
@@ -138,9 +141,17 @@ func add[In, Out any](server *mcp.Server, t *tools, name, title, description str
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input In) (*mcp.CallToolResult, Out, error) {
 		started := time.Now()
 		output, err := handler(ctx, input)
-		// The log records that a call happened and how it went, never its
-		// arguments or results.
-		t.Logger.Info("tool call", "tool", name, "duration_ms", time.Since(started).Milliseconds(), "ok", err == nil)
+		elapsed := time.Since(started)
+		outcome := "ok"
+		if err != nil {
+			outcome = "error"
+		}
+		// The audit log records who called which tool and how it went. It
+		// never records arguments or results: what a team looks up says
+		// what that team runs.
+		t.Logger.Info("tool call", "client", clientFrom(ctx), "tool", name, "outcome", outcome, "duration_ms", elapsed.Milliseconds())
+		t.Metrics.Inc("sec1_tool_calls_total", "Tool calls, by tool and outcome.", "tool", name, "outcome", outcome)
+		t.Metrics.Observe("sec1_tool_duration_seconds", "How long tool calls take.", elapsed.Seconds(), "tool", name)
 		// A returned error becomes a tool result with isError set, which is
 		// how the spec wants invalid input and failed lookups reported.
 		return nil, output, err

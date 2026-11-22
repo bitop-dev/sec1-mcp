@@ -72,7 +72,7 @@ or access:
 | --- | --- | --- |
 | `GITHUB_TOKEN` | A GitHub account | Raises GitHub's limit from 60 requests an hour. Without it, heavy use slows down or fails for a while. |
 | `NVD_API_KEY` | A free key from NVD | Lets NVD lookups run about ten times faster. Without it they are paced at one every six seconds. |
-| `SEC1_HTTP_TOKEN` | Nothing; you choose it | Protects the HTTP transport. Not used on stdio. |
+| `SEC1_HTTP_TOKEN`, `SEC1_HTTP_TOKEN_FILE` | Nothing; you choose them | Protect the HTTP transport, with one shared token or one per team. Not used on stdio. |
 
 This is a rule for the project, not an accident: a source that needs an
 account is only ever added as an option, and when it is not configured the
@@ -121,6 +121,7 @@ Every answer has a `status`:
 | [Tool reference](docs/tools.md) | Every tool's inputs and outputs, with real example answers. |
 | [How it works](docs/how-it-works.md) | The sources, how answers are combined, the status and priority rules, caching and deadlines. |
 | [Running the server](docs/deployment.md) | stdio and HTTP, authentication, the container image, and a Kubernetes example. |
+| [Running it for several teams](docs/shared-service.md) | A token per team, rate limits, the audit log, metrics, and capacity. |
 | [The product catalog](docs/catalog.md) | How names and images are matched, and how to add a product. |
 
 ## What it covers, and what it does not

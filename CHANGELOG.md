@@ -6,6 +6,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Running as a service several teams share:
+  - `SEC1_HTTP_TOKEN_FILE`: a file of named bearer tokens, one per team,
+    re-read when it changes so a team can be added or revoked without a
+    restart.
+  - `SEC1_HTTP_RATE`: a request limit per team, so one cannot starve the
+    others.
+  - An audit log line per tool call with the team's name, the tool and the
+    outcome, and never what was looked up. `-log-format json` for log
+    collectors.
+  - `SEC1_METRICS_ADDR`: Prometheus metrics on a listener of their own.
+  - `deploy/kubernetes.yaml` and a guide, `docs/shared-service.md`.
+
+### Fixed
+
+- The in-memory cache grew without limit in a long-running server. It now
+  holds at most 128 MB, most recently used first, and disk cache files older
+  than two days are deleted.
+- HTTP request bodies are limited to 8 MB.
+
 ## [0.2.0] - 2026-11-22
 
 ### Added

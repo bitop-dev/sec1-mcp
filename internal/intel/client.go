@@ -5,6 +5,7 @@ package intel
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,6 +80,9 @@ type Client struct {
 	NVDPause time.Duration
 	// RetryDelays are the waits before the second and third attempts.
 	RetryDelays []time.Duration
+	// Observe, when set, is told about every lookup: which service it went
+	// to, and whether it was answered from the cache, succeeded or failed.
+	Observe func(source, outcome string)
 
 	nvdMu   sync.Mutex
 	nvdLast time.Time
@@ -151,6 +156,7 @@ func (c *Client) fetch(ctx context.Context, r request, out any) (next string, er
 	}
 	key := r.method + " " + r.url + "\n" + string(body)
 	if entry, ok := c.Cache.get(key, r.ttl); ok {
+		c.observe(r.url, "cached")
 		return entry.Next, json.Unmarshal(entry.Body, out)
 	}
 
@@ -194,11 +200,13 @@ func (c *Client) raw(ctx context.Context, r request, body []byte) (response []by
 		}
 		response, next, err = c.once(ctx, r, body)
 		if err == nil {
+			c.observe(r.url, "ok")
 			return response, next, nil
 		}
 		status, isStatus := err.(*statusError)
 		transient := !isStatus || status.Code == http.StatusTooManyRequests || status.Code >= 500
 		if !transient || attempt >= len(c.RetryDelays) || ctx.Err() != nil {
+			c.observe(r.url, "error")
 			return nil, "", err
 		}
 		select {
@@ -241,6 +249,19 @@ func (c *Client) once(ctx context.Context, r request, body []byte) ([]byte, stri
 	return data, next, nil
 }
 
+// observe reports a lookup to the Observe hook, naming the service by its
+// host so that the number of distinct names stays small.
+func (c *Client) observe(target, outcome string) {
+	if c.Observe == nil {
+		return
+	}
+	source := "unknown"
+	if parsed, err := url.Parse(target); err == nil && parsed.Host != "" {
+		source = parsed.Hostname()
+	}
+	c.Observe(source, outcome)
+}
+
 // waitForNVD blocks until this request may go to NVD. Holding the lock while
 // waiting is what queues concurrent callers one behind another.
 func (c *Client) waitForNVD(ctx context.Context) error {
@@ -265,12 +286,32 @@ func (c *Client) githubHeaders() map[string]string {
 	return headers
 }
 
+const (
+	// maxCacheBytes bounds the in-memory cache, so a server that runs for
+	// months does not grow without limit.
+	maxCacheBytes = 128 << 20
+	// Files in the disk cache older than this are deleted. No lookup reuses
+	// an answer that old.
+	diskCacheMaxAge = 48 * time.Hour
+	pruneInterval   = time.Hour
+)
+
 // Cache keeps responses in memory and, when it has a directory, on disk, so
-// that short-lived server processes still benefit from earlier lookups.
+// that short-lived server processes still benefit from earlier lookups. The
+// memory side holds the most recently used responses up to a fixed size.
 type Cache struct {
-	mu  sync.Mutex
-	mem map[string]cacheEntry
-	dir string
+	mu        sync.Mutex
+	items     map[string]*list.Element
+	recent    *list.List // most recently used at the front
+	bytes     int
+	maxBytes  int
+	dir       string
+	lastPrune time.Time
+}
+
+type cacheItem struct {
+	key   string
+	entry cacheEntry
 }
 
 type cacheEntry struct {
@@ -286,7 +327,7 @@ func NewCache(dir string) *Cache {
 			dir = ""
 		}
 	}
-	return &Cache{mem: map[string]cacheEntry{}, dir: dir}
+	return &Cache{items: map[string]*list.Element{}, recent: list.New(), maxBytes: maxCacheBytes, dir: dir}
 }
 
 func (c *Cache) path(key string) string {
@@ -300,14 +341,20 @@ func (c *Cache) get(key string, ttl time.Duration) (cacheEntry, bool) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entry, ok := c.mem[key]
-	if !ok && c.dir != "" {
-		if data, err := os.ReadFile(c.path(key)); err == nil && json.Unmarshal(data, &entry) == nil {
-			ok = true
-			c.mem[key] = entry
+	var entry cacheEntry
+	if element, ok := c.items[key]; ok {
+		c.recent.MoveToFront(element)
+		entry = element.Value.(*cacheItem).entry
+	} else if c.dir != "" {
+		data, err := os.ReadFile(c.path(key))
+		if err != nil || json.Unmarshal(data, &entry) != nil {
+			return cacheEntry{}, false
 		}
+		c.remember(key, entry)
+	} else {
+		return cacheEntry{}, false
 	}
-	if !ok || time.Since(entry.At) > ttl {
+	if time.Since(entry.At) > ttl {
 		return cacheEntry{}, false
 	}
 	return entry, true
@@ -319,7 +366,7 @@ func (c *Cache) put(key string, entry cacheEntry) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.mem[key] = entry
+	c.remember(key, entry)
 	if c.dir == "" {
 		return
 	}
@@ -328,6 +375,47 @@ func (c *Cache) put(key string, entry cacheEntry) {
 		temporary := c.path(key) + ".tmp"
 		if os.WriteFile(temporary, data, 0o600) == nil {
 			_ = os.Rename(temporary, c.path(key))
+		}
+	}
+	if time.Since(c.lastPrune) > pruneInterval {
+		c.lastPrune = time.Now()
+		go pruneDisk(c.dir)
+	}
+}
+
+// remember stores an entry in memory and evicts the least recently used
+// ones until the cache fits its size again. The caller holds the lock.
+func (c *Cache) remember(key string, entry cacheEntry) {
+	if element, ok := c.items[key]; ok {
+		c.bytes -= len(element.Value.(*cacheItem).entry.Body)
+		c.recent.Remove(element)
+		delete(c.items, key)
+	}
+	// A response bigger than the whole cache is served from disk each time.
+	if len(entry.Body) > c.maxBytes {
+		return
+	}
+	c.items[key] = c.recent.PushFront(&cacheItem{key, entry})
+	c.bytes += len(entry.Body)
+	for c.bytes > c.maxBytes {
+		oldest := c.recent.Back()
+		item := oldest.Value.(*cacheItem)
+		c.bytes -= len(item.entry.Body)
+		c.recent.Remove(oldest)
+		delete(c.items, item.key)
+	}
+}
+
+// pruneDisk deletes cache files too old for any lookup to reuse.
+func pruneDisk(dir string) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-diskCacheMaxAge)
+	for _, file := range files {
+		if info, err := file.Info(); err == nil && !file.IsDir() && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, file.Name()))
 		}
 	}
 }

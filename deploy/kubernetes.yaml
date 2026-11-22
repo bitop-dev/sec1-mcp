@@ -1,0 +1,80 @@
+# sec1-mcp as a shared service.
+#
+# Before applying, create the token file as a Secret, one line per team:
+#
+#   printf 'platform %s\ndata-science %s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > tokens
+#   kubectl create secret generic sec1-mcp-tokens --from-file=tokens
+#   rm tokens
+#
+# Give each team its own line from that file. To add or revoke a team, update
+# the Secret; the server re-reads the file without a restart.
+#
+# See docs/shared-service.md for what each setting does.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sec1-mcp
+  labels: {app: sec1-mcp}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sec1-mcp}
+  template:
+    metadata:
+      labels: {app: sec1-mcp}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sec1-mcp
+          image: ghcr.io/bitop-dev/sec1-mcp:latest   # pin a version tag in production
+          args: ["-log-format", "json"]
+          env:
+            - {name: SEC1_HTTP_ADDR, value: "0.0.0.0:8080"}
+            - {name: SEC1_METRICS_ADDR, value: "0.0.0.0:9090"}
+            - {name: SEC1_HTTP_TOKEN_FILE, value: /etc/sec1-mcp/tokens}
+            - {name: SEC1_HTTP_RATE, value: "120"}
+            # Optional. Both only raise rate limits; see docs/shared-service.md.
+            # - name: GITHUB_TOKEN
+            #   valueFrom: {secretKeyRef: {name: sec1-mcp-upstream, key: github-token}}
+            # - name: NVD_API_KEY
+            #   valueFrom: {secretKeyRef: {name: sec1-mcp-upstream, key: nvd-api-key}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: metrics, containerPort: 9090}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tokens, mountPath: /etc/sec1-mcp, readOnly: true}
+            - {name: cache, mountPath: /home/nonroot/.cache}
+      volumes:
+        - name: tokens
+          secret: {secretName: sec1-mcp-tokens}
+        - name: cache
+          emptyDir: {sizeLimit: 2Gi}
+---
+# The MCP endpoint only. The metrics port is left off the Service on purpose,
+# so that it is reachable for scraping but not through whatever exposes this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sec1-mcp
+  labels: {app: sec1-mcp}
+spec:
+  selector: {app: sec1-mcp}
+  ports:
+    - {name: http, port: 80, targetPort: http}

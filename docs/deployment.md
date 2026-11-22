@@ -18,9 +18,13 @@ Both follow MCP specification revision 2026-07-28.
 | `-catalog <path>` | `SEC1_CATALOG` | A catalog file of your own products, added to the built-in catalog. See [catalog.md](catalog.md). |
 | `-http <addr>` | `SEC1_HTTP_ADDR` | Serve Streamable HTTP on this address, such as `127.0.0.1:8080`. Without it, the server uses stdio. |
 | `-http-json` | | Answer HTTP requests with plain JSON bodies instead of event streams. |
+| `-http-token-file <path>` | `SEC1_HTTP_TOKEN_FILE` | A file of named bearer tokens, one `name token` per line, so that callers can be told apart. |
+| `-http-rate <n>` | `SEC1_HTTP_RATE` | The most requests each client may make in a minute over HTTP. 0, the default, means no limit. |
+| `-metrics <addr>` | `SEC1_METRICS_ADDR` | Serve Prometheus metrics at `http://<addr>/metrics`, on a listener of its own. |
+| `-log-format <format>` | | `text`, the default, or `json`. |
 | `-cache-dir <dir>` | | Where lookups are cached. Defaults to the user cache directory; `""` keeps the cache in memory only. |
 | `-version` | | Print the version and exit. |
-| | `SEC1_HTTP_TOKEN` | Require this bearer token on every MCP request over HTTP. |
+| | `SEC1_HTTP_TOKEN` | Require this bearer token on every MCP request over HTTP. One token for everyone; see `-http-token-file` for one per team. |
 | | `GITHUB_TOKEN` | Raises GitHub's limit of 60 requests an hour. Needs no scopes for public repositories. |
 | | `NVD_API_KEY` | Raises NVD's limit of one request every six seconds. |
 
@@ -66,16 +70,19 @@ How the endpoint behaves:
 
 ### Authentication
 
-When `SEC1_HTTP_TOKEN` is set, every request to `/mcp` must carry
-`Authorization: Bearer <token>`; anything else gets 401.
+When `SEC1_HTTP_TOKEN` or `SEC1_HTTP_TOKEN_FILE` is set, every request to
+`/mcp` must carry `Authorization: Bearer <token>`; anything else gets 401.
 
-When it is not set, the server logs a warning at start-up and accepts every
+When neither is set, the server logs a warning at start-up and accepts every
 request. That is only reasonable when the server is bound to localhost, or
 when something in front of it authenticates callers.
 
-The token is a single shared secret. The server does not implement MCP's
-OAuth authorization. If you need per-user access or audit trails, put it
-behind a proxy that provides them.
+`SEC1_HTTP_TOKEN` is one secret for everyone. `SEC1_HTTP_TOKEN_FILE` gives
+each team its own named token, which is what you want for a service several
+teams share; see [shared-service.md](shared-service.md). Both are shared
+secrets, not user logins: the server does not implement MCP's OAuth
+authorization. If you need per-person identity, put it behind a proxy that
+provides it.
 
 Use TLS for anything that crosses a network: the token is sent on every
 request. The server speaks plain HTTP, so terminate TLS at a proxy or
@@ -123,6 +130,10 @@ The cache lives in the container user's cache directory,
 which only costs slower first lookups. Mount a volume there to keep it.
 
 ## Kubernetes
+
+For a service several teams share, start from
+[`deploy/kubernetes.yaml`](../deploy/kubernetes.yaml) and
+[shared-service.md](shared-service.md) instead of the manifest below.
 
 A minimal deployment. The token comes from a Secret you create separately:
 

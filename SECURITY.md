@@ -33,10 +33,20 @@ does not hold.
   the fields as untrusted in its tool schemas. It does not try to detect
   hostile text, so an agent reading the output must not act on instructions
   found in it.
-- **The HTTP transport is unauthenticated unless `SEC1_HTTP_TOKEN` is set.**
-  Without a token, anyone who can reach the port can use the server. It
-  refuses requests from other browser origins in either case.
+- **The HTTP transport is unauthenticated unless a token is configured**,
+  with `SEC1_HTTP_TOKEN` or `SEC1_HTTP_TOKEN_FILE`. Without one, anyone who
+  can reach the port can use the server. It refuses requests from other
+  browser origins in either case. Tokens are shared secrets, not user
+  logins: whoever holds a team's token is that team.
+- **The metrics endpoint is unauthenticated.** It is served on a listener of
+  its own so that it can be kept off the network that reaches the MCP
+  endpoint. It exposes tool names, team names and request counts, and never
+  what was looked up.
+- **The audit log holds no lookup data.** It records who called which tool
+  and how it went, not the arguments or the answer.
 - **All tools are read-only.** The server writes nothing except its own
   response cache.
-- **Credentials** (`GITHUB_TOKEN`, `NVD_API_KEY`, `SEC1_HTTP_TOKEN`) are read
-  from the environment and are never written to logs or to the cache.
+- **Credentials** (`GITHUB_TOKEN`, `NVD_API_KEY`, `SEC1_HTTP_TOKEN`, and the
+  tokens in the token file) are read from the environment or that file and
+  are never written to logs or to the cache. An error in the token file
+  names the line and never shows its contents.

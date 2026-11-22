@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -805,5 +807,82 @@ func TestCheckPackagesIsOnlyCleanWhenEverythingWasChecked(t *testing.T) {
 	offline.RetryDelays = nil
 	if failed := offline.CheckPackages(context.Background(), []string{"pkg:npm/lodash@4.17.21"}); failed.Status != StatusUnknown {
 		t.Errorf("database down: status = %q", failed.Status)
+	}
+}
+
+func TestMemoryCacheIsBounded(t *testing.T) {
+	cache := NewCache("")
+	cache.maxBytes = 1000
+	body := func(n int) cacheEntry { return cacheEntry{At: time.Now(), Body: make([]byte, n)} }
+
+	cache.put("a", body(400))
+	cache.put("b", body(400))
+	if _, ok := cache.get("a", time.Hour); !ok { // "a" is now the most recently used
+		t.Fatal("a should be cached")
+	}
+	cache.put("c", body(400)) // over the limit: the least recently used, "b", goes
+	if _, ok := cache.get("b", time.Hour); ok {
+		t.Error("b should have been evicted")
+	}
+	for _, key := range []string{"a", "c"} {
+		if _, ok := cache.get(key, time.Hour); !ok {
+			t.Errorf("%s should still be cached", key)
+		}
+	}
+	if cache.bytes != 800 || len(cache.items) != 2 {
+		t.Errorf("cache holds %d bytes in %d entries; want 800 in 2", cache.bytes, len(cache.items))
+	}
+
+	cache.put("a", body(100)) // replacing an entry must not double-count it
+	if cache.bytes != 500 {
+		t.Errorf("after replacing a: %d bytes, want 500", cache.bytes)
+	}
+	cache.put("huge", body(5000)) // bigger than the whole cache: not held in memory
+	if _, ok := cache.get("huge", time.Hour); ok || cache.bytes != 500 {
+		t.Errorf("an oversized entry should not be kept in memory: %d bytes", cache.bytes)
+	}
+}
+
+func TestDiskCacheOutlivesTheProcessAndIsPruned(t *testing.T) {
+	dir := t.TempDir()
+	first := NewCache(dir)
+	first.put("key", cacheEntry{At: time.Now(), Body: []byte("answer")})
+
+	second := NewCache(dir) // a new process, with nothing in memory
+	if entry, ok := second.get("key", time.Hour); !ok || string(entry.Body) != "answer" {
+		t.Fatalf("the answer should be read back from disk: %v, %v", entry, ok)
+	}
+
+	stale := second.path("stale")
+	_ = os.WriteFile(stale, []byte("{}"), 0o600)
+	old := time.Now().Add(-diskCacheMaxAge - time.Hour)
+	_ = os.Chtimes(stale, old, old)
+	pruneDisk(dir)
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("a file older than the maximum age should be deleted")
+	}
+	if _, err := os.Stat(second.path("key")); err != nil {
+		t.Error("a fresh file must be kept")
+	}
+}
+
+func TestLookupsAreReportedToTheObserver(t *testing.T) {
+	f := &fake{t: t}
+	client := f.client()
+	var mu sync.Mutex
+	seen := map[string]int{}
+	client.Observe = func(source, outcome string) {
+		mu.Lock()
+		seen[outcome]++
+		mu.Unlock()
+		if source != "127.0.0.1" {
+			t.Errorf("source = %q, want the service's host", source)
+		}
+	}
+	component := Component{Name: "pkg-litellm", Version: "1.106.12", Ecosystem: "PyPI", Package: "litellm"}
+	client.Check(context.Background(), component)
+	client.Check(context.Background(), component)
+	if seen["ok"] == 0 || seen["cached"] == 0 {
+		t.Errorf("observed %v; want fresh lookups on the first check and cached ones on the second", seen)
 	}
 }

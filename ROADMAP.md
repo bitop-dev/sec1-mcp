@@ -68,7 +68,8 @@ Follow-ups, also done:
 - **Resources for single advisories.**
 - **OAuth authorization**, as the specification describes it, alongside the
   shared token.
-- **An audit log and a metrics endpoint** for the HTTP transport.
+- [x] An audit log and a metrics endpoint for the HTTP transport.
+- [x] A token per team, and a request limit per team, for a shared service.
 - **A listing in the MCP registry.**
 
 ## Optional, and only with an account
