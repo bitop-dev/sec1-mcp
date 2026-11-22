@@ -58,6 +58,8 @@ const instructions = `Looks up known security advisories for software you run or
 
 Identify a component by product name ("LiteLLM"), by container image reference ("ghcr.io/berriai/litellm:main-v1.106.6-stable"), or by explicit identifiers (ecosystem and package, GitHub repo, or NVD cpe). Only a catalog of common product names and images is recognised; for anything else, pass explicit identifiers. find_identifiers suggests candidates for a name, which you must confirm before use. Give a version whenever you know it: without one the answer lists a product's whole advisory history.
 
+For a whole cluster, pass the image list or raw kubectl output to check_images. The resource sec1://catalog lists the products recognised by name and image.
+
 Each answer also says whether the version's release line has reached end of life ("support"), and marks advisories that a public scanner or exploit tool already targets ("publicExploits"). To ask only what is new, pass a "since" date.
 
 Read the "status" field of every answer. "unknown" means the server could not determine the answer; it never means safe. "possibly_affected" means a match by product name only. The "coverage" field says which sources were checked, skipped or failed.
@@ -87,7 +89,11 @@ func New(deps Deps) *mcp.Server {
 		Instructions: instructions,
 		// The tool list never changes while the server runs, and the logging
 		// capability is deprecated in the 2026-07-28 revision: logs go to stderr.
-		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
+		Capabilities: &mcp.ServerCapabilities{
+			Tools:     &mcp.ToolCapabilities{},
+			Prompts:   &mcp.PromptCapabilities{},
+			Resources: &mcp.ResourceCapabilities{},
+		},
 	})
 	t := &tools{deps}
 
@@ -97,6 +103,9 @@ func New(deps Deps) *mcp.Server {
 	add(server, t, "check_components", "Check several components",
 		fmt.Sprintf("Checks up to %d components in one call and returns a summary for each: status, counts by priority and the most urgent advisory ids. Use it for a list of what is running, such as the images in a cluster. Call check_component for the full advisories of any one of them.", maxBatch),
 		t.checkComponents)
+	add(server, t, "check_images", "Check a list of container images",
+		fmt.Sprintf("Checks up to %d container images in one call, given as a list or as the raw output of a command such as kubectl get pods. Images that are the same product at the same version share one check. Returns a summary per product version, most urgent first, and lists the images it does not recognise, which are not checked. Use it to audit what is running in a cluster.", maxImages),
+		t.checkImages)
 	add(server, t, "suggest_version", "Suggest an upgrade",
 		"Given a component and the version running, works out the smallest upgrade that includes a fix for every advisory affecting it, then checks that version and the latest release against all sources instead of assuming they are clean.",
 		t.suggestVersion)
@@ -109,6 +118,8 @@ func New(deps Deps) *mcp.Server {
 	add(server, t, "resolve_component", "Identify a component",
 		"Shows how the server identifies a product name or container image, which sources can check it, and what version it read from an image tag. It makes no advisory lookups. Use it to find out whether a product is recognised before relying on a check.",
 		t.resolveComponent)
+	addPrompts(server)
+	addResources(server, t)
 	return server
 }
 
@@ -198,6 +209,7 @@ type checkOutput struct {
 	LatestVersion   string            `json:"latestVersion,omitempty"`
 	VersionStatus   string            `json:"versionStatus" jsonschema:"current, behind, unknown or not-set"`
 	Support         intel.Support     `json:"support" jsonschema:"whether this version's release line still receives fixes"`
+	VendorNotices   []intel.Notice    `json:"vendorNotices" jsonschema:"recent entries from the vendor's own security feed that may concern this version; announcements to read, not matched advisories"`
 	Coverage        []intel.Coverage  `json:"coverage"`
 	Advisories      []intel.Advisory  `json:"advisories"`
 	Since           string            `json:"since,omitempty" jsonschema:"the since date applied, if one was given"`
@@ -217,6 +229,7 @@ type ComponentSummary struct {
 	VersionStatus   string            `json:"versionStatus"`
 	Support         intel.Support     `json:"support" jsonschema:"whether this version's release line still receives fixes"`
 	OlderAdvisories int               `json:"olderAdvisories" jsonschema:"advisories that apply but were left out because they predate since"`
+	VendorNotices   int               `json:"vendorNotices" jsonschema:"how many recent vendor security notices may concern this version; check_component lists them"`
 	TopAdvisories   []string          `json:"topAdvisories" jsonschema:"ids of the most urgent advisories, at most 5"`
 	Failed          []string          `json:"failedSources" jsonschema:"sources that could not be checked for this component"`
 }
@@ -276,7 +289,8 @@ func (t *tools) checkComponent(ctx context.Context, input checkInput) (checkOutp
 	output := checkOutput{
 		Component: resolved, Status: result.Status, Reason: result.Reason, Counts: result.Counts,
 		LatestVersion: result.LatestVersion, VersionStatus: result.VersionStatus, Support: result.Support,
-		Coverage: result.Coverage, Advisories: result.Advisories, Since: since, OlderAdvisories: older,
+		VendorNotices: result.VendorNotices,
+		Coverage:      result.Coverage, Advisories: result.Advisories, Since: since, OlderAdvisories: older,
 		TotalAdvisories: len(result.Advisories), Notice: untrustedNotice,
 	}
 	if len(output.Advisories) > limit {
@@ -362,7 +376,7 @@ func (t *tools) summarize(ctx context.Context, components []intel.Component, res
 			summary := ComponentSummary{
 				Component: resolved[i], Status: result.Status, Reason: result.Reason, Counts: result.Counts,
 				LatestVersion: result.LatestVersion, VersionStatus: result.VersionStatus, Support: result.Support,
-				OlderAdvisories: older, TopAdvisories: []string{}, Failed: []string{},
+				OlderAdvisories: older, VendorNotices: len(result.VendorNotices), TopAdvisories: []string{}, Failed: []string{},
 			}
 			for _, advisory := range result.Advisories {
 				if len(summary.TopAdvisories) == topAdvisories {
@@ -554,7 +568,7 @@ func toComponent(product catalog.Product) intel.Component {
 	return intel.Component{
 		Name: product.Name, Ecosystem: product.Ecosystem, Package: product.Package, OtherPackages: product.OtherPackages,
 		Repo: product.Repo, GitLabRepo: product.GitLabRepo, CPE: product.CPE, OtherCPEs: product.OtherCPEs,
-		Lifecycle: product.Lifecycle, Aliases: product.Aliases,
+		Lifecycle: product.Lifecycle, Feeds: product.Feeds, TagPrefix: product.TagPrefix, Aliases: product.Aliases,
 	}
 }
 

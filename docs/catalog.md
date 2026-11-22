@@ -38,6 +38,8 @@ it. There are three ways to check software it does not know:
 | `cpe` | NVD lookups, as `vendor:product`. Also what lets name-only matches from CISA's list be cleared. |
 | `otherCpes` | Further names NVD files the same product under. |
 | `lifecycle` | The product's name in endoflife.date's data, for end-of-life status and the latest release. |
+| `feeds` | The vendor's own security feeds, Atom or RSS, as `https` URLs. Every entry of a feed is treated as being about the product, so list only feeds that are about security. |
+| `tagPrefix` | What the repository puts before the version in its release tags, when it is not just `v`: `controller-v` for `controller-v1.11.3`. Needed when a repository releases several things. |
 | `gitlabRepo` | A gitlab.com project, used only to find the latest release. |
 | `images` | Container image repositories, without registry host or tag. |
 
@@ -119,9 +121,8 @@ things, so corrections are welcome.
 
 Known gaps:
 
-- **ingress-nginx** has no source for the latest release or for lifecycle
-  data, so `latestVersion` is empty and `support` is `unknown` for it.
-- **LiteLLM, vLLM, Onyx, Ollama and Open WebUI** have no lifecycle data, so
-  `support` is `unknown` for them.
+- **LiteLLM, vLLM, Onyx, Ollama, Open WebUI and ingress-nginx** have no
+  lifecycle data, so `support` is `unknown` for them.
+- **Only GitLab has a vendor feed** in the catalog so far.
 - **Prometheus** is not looked up as a Go module, because its module
   versions do not match its release versions.

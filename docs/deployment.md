@@ -186,7 +186,8 @@ Things to decide for your cluster:
 - **Outbound access.** The pod needs HTTPS to `api.osv.dev`,
   `api.github.com`, `raw.githubusercontent.com`, `services.nvd.nist.gov`,
   `www.cisa.gov`, `api.first.org`, `endoflife.date`, `pypi.org`,
-  `registry.npmjs.org` and `gitlab.com`. If you restrict egress, allow
+  `registry.npmjs.org`, `gitlab.com` and `about.gitlab.com`, plus the host
+  of any feed in your own catalog file. If you restrict egress, allow
   those. A host that is blocked shows up as a failed source in `coverage`.
 - **Who can reach it.** Keep the Service cluster-internal, and use a
   NetworkPolicy to limit which pods may call it. Expose it outside the

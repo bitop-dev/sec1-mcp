@@ -27,6 +27,12 @@ type Component struct {
 	OtherCPEs []string
 	// Lifecycle is the product's name in endoflife.date's data.
 	Lifecycle string
+	// Feeds are the vendor's security feeds, Atom or RSS. They come from
+	// the catalog, never from a caller.
+	Feeds []string
+	// TagPrefix is what the repository puts before the version in release
+	// tags, when it is not just "v": "controller-v" for controller-v1.11.3.
+	TagPrefix string
 	Aliases   []string
 }
 
@@ -95,6 +101,7 @@ type Result struct {
 	LatestVersion string     `json:"latestVersion,omitempty"`
 	VersionStatus string     `json:"versionStatus" jsonschema:"current, behind, unknown or not-set: the version compared with the latest release"`
 	Support       Support    `json:"support"`
+	VendorNotices []Notice   `json:"vendorNotices" jsonschema:"recent entries from the vendor's own security feed that may concern this version. They are announcements, not matched advisories: read them to see whether they apply."`
 	Coverage      []Coverage `json:"coverage"`
 	Advisories    []Advisory `json:"advisories"`
 }

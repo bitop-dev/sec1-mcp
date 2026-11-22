@@ -6,6 +6,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `check_images`: checks up to 500 container images in one call, given as a
+  list or as raw `kubectl` output. Images that are the same product at the
+  same version share one check; unrecognised images are listed and not
+  checked.
+- `vendorNotices` on answers: recent entries from the vendor's own security
+  feed that may concern the version. GitLab's patch-release feed is the
+  first in the catalog.
+- Three prompts: `audit_cluster_images`, `plan_upgrade` and
+  `triage_advisory`.
+- The resource `sec1://catalog`, listing the recognised products.
+- Catalog fields `feeds` and `tagPrefix`.
+- ingress-nginx is now looked up as a Go module, and its latest release is
+  found from the controller's own tags.
+
 ## [0.1.1] - 2026-11-21
 
 ### Added

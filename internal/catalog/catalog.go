@@ -6,6 +6,7 @@ package catalog
 import (
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -31,7 +32,12 @@ type Product struct {
 	// OtherCPEs lists further names NVD files the same product under.
 	OtherCPEs []string `yaml:"otherCpes"`
 	// Lifecycle is the product's name in endoflife.date's data.
-	Lifecycle string   `yaml:"lifecycle"`
+	Lifecycle string `yaml:"lifecycle"`
+	// Feeds are the vendor's security feeds, Atom or RSS.
+	Feeds []string `yaml:"feeds"`
+	// TagPrefix is what the repository puts before the version in release
+	// tags, when it is not just "v".
+	TagPrefix string   `yaml:"tagPrefix"`
 	Images    []string `yaml:"images"`
 }
 
@@ -83,6 +89,7 @@ var (
 	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
 	gitlabPattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100})+$`)
 	cpePattern       = regexp.MustCompile(`^([aoh]:)?[A-Za-z0-9._-]{1,100}:[A-Za-z0-9._-]{1,100}$`)
+	tagPrefixPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,40}$`)
 	lifecyclePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,59}$`)
 	imagePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,199}$`)
 )
@@ -124,6 +131,14 @@ func parse(data []byte, source string) ([]Product, error) {
 		}
 		if len(product.OtherCPEs) > 0 && product.CPE == "" {
 			return nil, fail("otherCpes needs a cpe")
+		}
+		for _, feed := range product.Feeds {
+			if parsed, err := url.Parse(feed); err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+				return nil, fail("feed %q must be an https URL", feed)
+			}
+		}
+		if product.TagPrefix != "" && (!tagPrefixPattern.MatchString(product.TagPrefix) || product.Repo == "") {
+			return nil, fail("tagPrefix %q must be a short tag prefix such as controller-v, on a product with a repo", product.TagPrefix)
 		}
 		for _, other := range product.OtherPackages {
 			if !packagePattern.MatchString(other) {

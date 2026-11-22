@@ -39,6 +39,7 @@ input ──▶ resolve ──▶ OSV ─────┐
 | EPSS | CVE ids | CVE id | Likelihood of exploitation |
 | nuclei-templates, Metasploit | CVE ids | CVE id | Whether a public scanner template or exploit module exists |
 | endoflife.date | `lifecycle` | Release line | Whether the line still gets fixes, and the latest release |
+| Vendor security feeds | `feeds` | Versions named in a title | Recent announcements, as notices to read |
 
 Products written in Go are looked up in OSV as Go modules. That gives exact
 fixed versions, and it matters most where NVD has not yet filed version data
@@ -153,6 +154,7 @@ still benefits from earlier lookups.
 | GitHub, latest-release lookups | 30 minutes |
 | NVD, CISA KEV | 1 hour |
 | EPSS | 6 hours |
+| Vendor feeds | 30 minutes |
 | Lifecycle data | 12 hours |
 | Exploit indexes | 24 hours |
 

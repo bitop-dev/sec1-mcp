@@ -47,8 +47,8 @@ func resolveOverHTTP(t *testing.T, endpoint string, client *http.Client) (map[st
 	if err != nil {
 		return nil, err
 	}
-	if len(list.Tools) != 6 {
-		t.Errorf("listed %d tools over HTTP, want 6", len(list.Tools))
+	if len(list.Tools) != 7 {
+		t.Errorf("listed %d tools over HTTP, want 7", len(list.Tools))
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "resolve_component", Arguments: map[string]any{"image": "vllm/vllm-openai:v0.34.0"}})
 	if err != nil {

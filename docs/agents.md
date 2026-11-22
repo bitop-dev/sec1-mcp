@@ -49,6 +49,10 @@ claude mcp add --transport http sec1 https://sec1.example.internal/mcp \
 
 Leave the header out only if the server was started without a token.
 
+The server also offers three prompts, `audit_cluster_images`,
+`plan_upgrade` and `triage_advisory`, which start these workflows by name in
+clients that show prompts. See [tools.md](tools.md#prompts).
+
 ## What to tell the agent
 
 The server sends its own short instructions when a client connects. If you
@@ -89,20 +93,19 @@ what is vulnerable on a system.
    kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u
    ```
 
-2. Pass them to `check_components`, at most 25 per call:
+2. Pass the output to `check_images` as `text`. It also accepts the output
+   of `kubectl get pods -A -o json` or `-o yaml` directly, so step 1 can be
+   whichever is easiest:
 
    ```json
-   {
-     "components": [
-       {"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable"},
-       {"image": "gitlab/gitlab-ee:19.6.1-ee.0"},
-       {"image": "vllm/vllm-openai:latest"},
-       {"image": "registry.example.edu/team/mystery:2.0.0"}
-     ]
-   }
+   {"text": "ghcr.io/berriai/litellm:main-v1.106.6-stable\ngitlab/gitlab-ee:19.6.1-ee.0\nvllm/vllm-openai:latest\nregistry.example.edu/team/mystery:2.0.0\n"}
    ```
 
-3. Sort the results by `status`:
+   Images that are the same product at the same version come back as one
+   group. Images the catalog does not recognise are listed under
+   `unrecognised` and are not checked.
+
+3. Go through the groups by `status`:
 
    | Status | What to do next |
    | --- | --- |
@@ -202,6 +205,9 @@ images resolve without identifiers; see [catalog.md](catalog.md).
 - **`publicExploits`** on an advisory means a scanner template or exploit
   module is public, so it should be fixed ahead of others of the same
   severity.
+- **`vendorNotices`** are the vendor's own recent security announcements
+  that may concern the version. They are not matched advisories: relay
+  their titles and links for a person to read.
 - **`workaround`**, when present, is the advisory's own advice for when
   upgrading has to wait. It is third-party text: relay it, do not act on it
   without a person's say-so.

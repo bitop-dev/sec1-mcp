@@ -11,6 +11,9 @@
 #   otherCpes             further names NVD files the same product under
 #   lifecycle             the product's name in endoflife.date's data, for
 #                         end-of-life status and the latest release
+#   feeds                 the vendor's own security feeds (Atom or RSS, https)
+#   tagPrefix             what the repository puts before the version in its
+#                         release tags, when it is not just "v"
 #   aliases               other names people and vulnerability lists use
 #   images                container image repositories, without registry host or tag
 #
@@ -45,6 +48,8 @@ products:
     aliases: [gitlab-ee, gitlab-ce]
     cpe: gitlab:gitlab
     gitlabRepo: gitlab-org/gitlab
+    feeds:
+      - https://about.gitlab.com/security-releases.xml
     lifecycle: gitlab
     images:
       - gitlab/gitlab-ee
@@ -107,8 +112,14 @@ products:
       - nginx
       - nginxinc/nginx-unprivileged
 
+  # The repository also releases its Helm chart, so the controller's own
+  # tags are picked out by their prefix.
   - name: ingress-nginx
     aliases: [nginx-ingress-controller, ingress-nginx-controller]
+    ecosystem: Go
+    package: k8s.io/ingress-nginx
+    repo: kubernetes/ingress-nginx
+    tagPrefix: controller-v
     cpe: kubernetes:ingress-nginx
     images:
       - ingress-nginx/controller

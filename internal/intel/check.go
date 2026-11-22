@@ -23,7 +23,7 @@ var cvePattern = regexp.MustCompile(`^CVE-\d{4}-\d{4,}$`)
 // what they say. It never returns an error: a source that fails is recorded
 // in Coverage and pushes Status toward "unknown".
 func (c *Client) Check(ctx context.Context, component Component) Result {
-	result := Result{Coverage: []Coverage{}, Advisories: []Advisory{}}
+	result := Result{Coverage: []Coverage{}, Advisories: []Advisory{}, VendorNotices: []Notice{}}
 
 	// The version-aware sources, in the order their details are preferred
 	// when two report the same advisory.
@@ -123,6 +123,15 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 		result.Coverage = append(result.Coverage, Coverage{"lifecycle", "checked", ""})
 	}
 
+	if len(component.Feeds) == 0 {
+		result.Coverage = append(result.Coverage, Coverage{"vendor-feeds", "skipped", "no vendor security feed is known for this product"})
+	} else if notices, err := c.vendorNotices(ctx, component); err != nil {
+		result.Coverage = append(result.Coverage, Coverage{"vendor-feeds", "failed", describe(err)})
+	} else {
+		result.VendorNotices = notices
+		result.Coverage = append(result.Coverage, Coverage{"vendor-feeds", "checked", fmt.Sprintf("%d recent notices", len(notices))})
+	}
+
 	result.VersionStatus = "not-set"
 	latest, err := c.Latest(ctx, component)
 	if latest == "" {
@@ -168,6 +177,9 @@ func (c *Client) Check(ctx context.Context, component Component) Result {
 		if component.Version == "" {
 			result.Reason = "Every applicable source answered and none lists an advisory for this product."
 		}
+	}
+	if count := len(result.VendorNotices); count > 0 {
+		result.Reason += fmt.Sprintf(" The vendor has published %d recent security notices that may concern this version; see vendorNotices.", count)
 	}
 	if result.Support.Status == SupportEnded {
 		ended := "has reached end of life"

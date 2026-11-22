@@ -21,8 +21,12 @@ These points describe the design, so that a report can say which of them
 does not hold.
 
 - **Tool inputs are untrusted.** Each value is validated against a pattern
-  before use. The services the server calls are fixed in the code; no input
-  is ever used as a host name.
+  before use. No tool input is ever used as a host name: the services the
+  server calls are fixed in the code, apart from vendor feed URLs, which
+  come only from the catalog and from the catalog file the operator supplies.
+- **The catalog file is trusted.** Whoever can write the file named by
+  `-catalog` can make the server fetch the `https` URLs listed in it as
+  feeds. Protect it as you would the server's own configuration.
 - **Advisory text is untrusted.** Titles, summaries and reference URLs are
   written by third parties and are passed on to the calling agent as data.
   The server strips control characters and limits their length, and marks

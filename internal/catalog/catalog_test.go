@@ -136,6 +136,9 @@ func TestOwnCatalogIsValidated(t *testing.T) {
 		"duplicate name":     "products:\n  - name: X\n  - name: Y\n    aliases: [x]\n",
 		"bad lifecycle name": "products:\n  - name: X\n    lifecycle: Not A Slug\n",
 		"otherCpes alone":    "products:\n  - name: X\n    otherCpes: ['a:b']\n",
+		"feed over http":     "products:\n  - name: X\n    feeds: ['http://example.invalid/feed.xml']\n",
+		"feed with a login":  "products:\n  - name: X\n    feeds: ['https://user:pw@example.invalid/feed.xml']\n",
+		"tagPrefix, no repo": "products:\n  - name: X\n    tagPrefix: controller-v\n",
 		"duplicate image":    "products:\n  - name: X\n    images: [a/b]\n  - name: Y\n    images: [a/b]\n",
 		"not a catalog file": "products: 7\n",
 	}

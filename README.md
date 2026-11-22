@@ -62,16 +62,21 @@ For other clients, and for connecting over HTTP, see
 
 ## Tools
 
-All six are read-only.
+All seven are read-only.
 
 | Tool | Use it to |
 | --- | --- |
 | `check_component` | Get the advisories that apply to one component at one version. |
 | `check_components` | Check up to 25 components at once and get a summary of each. |
+| `check_images` | Check up to 500 container images, given as a list or as raw `kubectl` output. |
 | `suggest_version` | Find the smallest upgrade that fixes what affects the running version. |
 | `get_advisory` | Get the full record for one CVE, GHSA or other advisory id. |
 | `resolve_component` | See how a name or image is identified, without any lookups. |
 | `find_identifiers` | Search for candidate identifiers for a product the catalog does not know. |
+
+The server also offers three prompts (`audit_cluster_images`, `plan_upgrade`,
+`triage_advisory`) and one resource, `sec1://catalog`, which lists the
+products it recognises.
 
 A component can be given by name (`LiteLLM`), by container image reference,
 or by explicit identifiers: a registry package, a GitHub repository, or an

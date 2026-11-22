@@ -3,6 +3,7 @@ package intel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -591,5 +592,84 @@ func TestGoPseudoVersionsAreNotOfferedAsFixes(t *testing.T) {
 		{"introduced":"0"},{"fixed":"1.9.2-0.20260616075434-82ef13993059"},{"fixed":"11.6.14"}]}]}]}`), &vuln)
 	if got := strings.Join(vuln.fixedFor("github.com/grafana/grafana"), ","); got != "11.6.14" {
 		t.Errorf("fixedFor = %q, want only the release", got)
+	}
+}
+
+const atomFeed = `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Patch Releases</title>
+<link href="https://example.invalid/releases/" rel="alternate"/>
+<entry><title>Critical Patch Release: 19.6.2, 19.5.9 &amp; 19.4.11</title>
+  <link href="https://example.invalid/self.xml" rel="self"/><link href="https://example.invalid/patch-19-6-2/" rel="alternate"/>
+  <id>one</id><published>%s</published></entry>
+<entry><title>Patch Release: 19.6.1, 19.5.8</title><link href="https://example.invalid/patch-19-6-1/" rel="alternate"/><published>%s</published></entry>
+<entry><title>Old Patch Release: 30.0.0</title><link href="https://example.invalid/old/" rel="alternate"/><published>2020-01-01T00:00:00Z</published></entry>
+<entry><title>No usable link</title><link href="javascript:alert(1)" rel="alternate"/><published>%s</published></entry>
+</feed>`
+
+func TestVendorNoticesKeepWhatMayConcernTheVersion(t *testing.T) {
+	recent := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/feed.xml", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, atomFeed, recent, recent, recent)
+	})
+	served := httptest.NewServer(mux)
+	defer served.Close()
+	client := &Client{HTTP: served.Client(), Cache: NewCache("")}
+
+	titles := func(running string) string {
+		notices, err := client.vendorNotices(context.Background(), Component{Name: "GitLab", Version: running, Feeds: []string{served.URL + "/feed.xml"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var list []string
+		for _, notice := range notices {
+			if !strings.HasPrefix(notice.URL, "https://example.invalid/patch-") {
+				t.Errorf("unexpected link %q", notice.URL)
+			}
+			list = append(list, notice.Title)
+		}
+		return strings.Join(list, " | ")
+	}
+	// Running 19.6.1: the release that names a newer version is news; the
+	// one that only names versions already included is not; the old one and
+	// the one with an unusable link are dropped.
+	if got := titles("19.6.1"); got != "Critical Patch Release: 19.6.2, 19.5.9 & 19.4.11" {
+		t.Errorf("for 19.6.1: %q", got)
+	}
+	if got := titles("19.6.2"); got != "" {
+		t.Errorf("for 19.6.2 nothing should remain: %q", got)
+	}
+	if got := titles(""); !strings.Contains(got, "19.6.2") || !strings.Contains(got, "19.6.1") {
+		t.Errorf("with no version both recent notices should be listed: %q", got)
+	}
+}
+
+func TestRSSFeedsAreReadToo(t *testing.T) {
+	notices, dates, err := parseFeed([]byte(`<rss version="2.0"><channel><title>Bulletins</title><link>https://example.invalid/</link>
+<item><title><![CDATA[Security Bulletin: Driver <2026>]]></title><link>https://example.invalid/bulletin/1</link>
+<pubDate>Wed, 18 Nov 2026 10:00:00 GMT</pubDate></item></channel></rss>`))
+	if err != nil || len(notices) != 1 {
+		t.Fatalf("notices = %+v, err = %v", notices, err)
+	}
+	if notices[0].Title != "Security Bulletin: Driver <2026>" || notices[0].URL != "https://example.invalid/bulletin/1" || dates[0].Year() != 2026 {
+		t.Errorf("notice = %+v, date = %v", notices[0], dates[0])
+	}
+	if _, _, err := parseFeed([]byte("this is not xml <")); err == nil {
+		t.Error("an unreadable feed should be an error, not an empty list")
+	}
+}
+
+func TestLatestUsesTheProductsOwnTags(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kubernetes/ingress-nginx/releases", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"tag_name": "helm-chart-4.15.1"}, {"tag_name": "controller-v1.15.1"}, {"tag_name": "controller-v1.14.5"},
+		})
+	})
+	served := httptest.NewServer(mux)
+	defer served.Close()
+	client := &Client{HTTP: served.Client(), Cache: NewCache(""), Endpoints: Endpoints{GitHub: served.URL}}
+	latest, err := client.Latest(context.Background(), Component{Name: "ingress-nginx", Repo: "kubernetes/ingress-nginx", TagPrefix: "controller-v"})
+	if err != nil || latest != "1.15.1" {
+		t.Errorf("latest = %q, err = %v; the chart's tag must not be mistaken for the controller's", latest, err)
 	}
 }

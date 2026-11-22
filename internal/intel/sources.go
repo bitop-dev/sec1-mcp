@@ -774,8 +774,14 @@ func (c *Client) Latest(ctx context.Context, component Component) (string, error
 		}
 		var tags []string
 		for _, release := range releases {
-			if !release.Draft && !release.Prerelease {
-				tags = append(tags, release.TagName)
+			if release.Draft || release.Prerelease {
+				continue
+			}
+			// A repository that releases several things tags each with its
+			// own prefix; only the product's own tags count.
+			tag, isProduct := strings.CutPrefix(release.TagName, component.TagPrefix)
+			if isProduct {
+				tags = append(tags, tag)
 			}
 		}
 		return version.Highest(tags), nil

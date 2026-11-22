@@ -1,6 +1,6 @@
 # Tool reference
 
-All six tools are read-only. Each returns structured content that matches
+All seven tools are read-only. Each returns structured content that matches
 its output schema, and the same JSON as text for clients that read only text.
 
 Invalid input and failed lookups come back as a tool result with `isError`
@@ -97,6 +97,7 @@ Extra inputs:
 | `counts` | Advisories by priority, and how many are exploited in the wild. |
 | `latestVersion`, `versionStatus` | The newest final release, and `current`, `behind`, `unknown` or `not-set`. |
 | `support` | Whether the version's release line still receives fixes. See [support](#support). |
+| `vendorNotices` | Recent entries from the vendor's own security feed that may concern this version. See [vendor notices](#vendor-notices). |
 | `since`, `olderAdvisories` | The `since` date applied, and how many advisories that apply were left out because they predate it. |
 | `coverage` | What each source did: `checked`, `skipped` or `failed`, with detail. |
 | `advisories` | Most urgent first, up to `limit`. |
@@ -136,6 +137,22 @@ in it are simply never fixed.
 When the line has ended, the answer's `reason` says so as well. `unknown`
 means no lifecycle data is known for the product, or the version's line is
 not in it; it does not mean supported.
+
+### Vendor notices
+
+Some vendors announce security releases in a feed before the advisory
+databases catch up. For products with such a feed in the catalog,
+`vendorNotices` lists its entries from the last 90 days, each with a `title`,
+`url` and `published` date, ten at most.
+
+These are announcements, not matched advisories: a feed entry has no
+affected range. The only filtering is by the versions a title names. An
+entry is left out when every version it names is at or below the one
+running, since that release is already included. So for GitLab 19.5.0 the
+notice "Patch Release: 19.6.1, 19.5.8" is listed, and for 19.6.1 it is not.
+
+Notices do not change `status`. When there are any, `reason` says so. The
+titles are third-party text and untrusted.
 
 ### Asking what is new
 
@@ -219,6 +236,68 @@ The results, one per component in the order given (shortened):
 `topAdvisories` holds at most five ids, most urgent first. `failedSources`
 names the sources that could not be checked for that component. A component
 that does not finish before the call's deadline comes back as `unknown`.
+
+## check_images
+
+Checks up to 500 container images in one call. It is the tool for "what is
+vulnerable in this cluster".
+
+| Field | Meaning |
+| --- | --- |
+| `images` | A list of image references. |
+| `text` | Raw output that lists workloads. Image references are extracted from it. |
+| `since` | A date as `YYYY-MM-DD`, as in `check_component`. |
+
+Give `images`, `text`, or both. From `text`, references are taken from
+`"image"` fields in JSON, from `image:` lines in YAML, or, when there are
+neither, from every token that looks like an image reference, which covers a
+`jsonpath` list and the wide table. The default `kubectl get pods` table
+does not list images, so it yields none.
+
+```json
+{"text": "<output of: kubectl get pods -A -o json>"}
+```
+
+```json
+{
+  "imagesFound": 10,
+  "byStatus": {"affected": 7, "no_known_advisories": 1, "unknown": 1, "version_needed": 1},
+  "results": [
+    {
+      "images": [
+        "registry.gitlab.com/gitlab-org/build/cng/gitlab-webservice-ee:v19.5.0",
+        "registry.gitlab.com/gitlab-org/build/cng/gitlab-sidekiq-ee:v19.5.0"
+      ],
+      "imageCount": 2,
+      "component": {"name": "GitLab", "version": "19.5.0", "resolvedFrom": "catalog"},
+      "status": "affected",
+      "counts": {"urgent": 1, "high": 3, "normal": 8, "exploited": 0, "publicExploit": 0},
+      "latestVersion": "19.6.1-ee",
+      "versionStatus": "behind",
+      "support": {"status": "supported"},
+      "vendorNotices": 6
+    }
+  ],
+  "unrecognised": ["registry.example.edu/team/portal:4.2.0"],
+  "unrecognisedCount": 1
+}
+```
+
+The example is shortened to one of its seven groups.
+
+- **Images are grouped.** Every image that is the same product at the same
+  version shares one check and one entry, with up to 10 of its references
+  and the total in `imageCount`.
+- **Results are ordered** by status, `affected` first, then by how many
+  urgent and high advisories each has.
+- **Unrecognised images are not checked.** They are listed, up to 100, and
+  counted under `unknown` in `byStatus`. Never report them as clean. Check
+  the ones that matter with `find_identifiers` or explicit identifiers.
+- **One call covers 60 product versions.** Beyond that, the remaining groups
+  come back as `unknown` with a reason saying so.
+- **A large listing can run out of time.** Groups that were not reached come
+  back as `unknown`. Calling again continues, because earlier answers are
+  cached.
 
 ## suggest_version
 
@@ -374,3 +453,20 @@ Confirm a candidate from its description and evidence before passing it to
 
 Each source returns at most three candidates, exact names first. Forked
 repositories and deprecated NVD entries are left out.
+
+## Prompts
+
+Prompts are ready-made workflows a person can start by name. Each returns
+instructions for the agent that use the tools above.
+
+| Prompt | Arguments | What it sets off |
+| --- | --- | --- |
+| `audit_cluster_images` | `namespace` (optional) | List the images running in a Kubernetes cluster, check them with `check_images`, and report by urgency, with what could not be checked listed separately. |
+| `plan_upgrade` | `product`, `version` (optional) | Work out the smallest upgrade that fixes what affects a product, and what stays open afterwards. |
+| `triage_advisory` | `id`, `product` and `version` (optional) | Explain one advisory and check whether the version you run is affected. |
+
+## Resources
+
+| URI | Contents |
+| --- | --- |
+| `sec1://catalog` | The products recognised by name and image, as JSON: each product's aliases and images, which sources check it, and whether lifecycle data exists for it. |

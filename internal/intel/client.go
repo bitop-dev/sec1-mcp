@@ -58,6 +58,7 @@ const (
 	ttlKEV       = time.Hour
 	ttlEPSS      = 6 * time.Hour
 	ttlLatest    = 30 * time.Minute
+	ttlFeeds     = 30 * time.Minute
 	ttlLifecycle = 12 * time.Hour
 	ttlExploits  = 24 * time.Hour
 )
@@ -162,6 +163,21 @@ func (c *Client) fetch(ctx context.Context, r request, out any) (next string, er
 	}
 	c.Cache.put(key, cacheEntry{At: time.Now(), Next: next, Body: response})
 	return next, nil
+}
+
+// cachedRaw returns a URL's body as bytes, from the cache when it is fresh.
+// It is for responses that are not JSON.
+func (c *Client) cachedRaw(ctx context.Context, target string, ttl time.Duration) ([]byte, error) {
+	key := "GET-raw " + target
+	if entry, ok := c.Cache.get(key, ttl); ok {
+		return entry.Body, nil
+	}
+	data, _, err := c.raw(ctx, request{url: target, headers: map[string]string{"Accept": "application/atom+xml, application/rss+xml, application/xml, text/xml"}}, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.Cache.put(key, cacheEntry{At: time.Now(), Body: data})
+	return data, nil
 }
 
 // raw performs the request with retries and returns the response body

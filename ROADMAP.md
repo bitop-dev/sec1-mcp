@@ -29,9 +29,7 @@ Follow-ups, also done:
 - [x] Several NVD product names for one product, as nginx needs.
 - [x] The latest release of PostgreSQL and nginx, from lifecycle data.
 
-Still open here:
-
-- A source for the latest release of ingress-nginx.
+- [x] The latest release of ingress-nginx, from the controller's own tags.
 
 ## 2. More signal in each answer
 
@@ -42,8 +40,9 @@ Still open here:
 - [x] Go-based products looked up as Go modules, for exact fixed versions
   where NVD has no version data.
 - **A wider exploited-in-the-wild list** than CISA's alone.
-- **Vendor security feeds**, for products whose vendor announces fixes
-  before the databases catch up.
+- [x] Vendor security feeds, for products whose vendor announces fixes
+  before the databases catch up. GitLab's is the first.
+- **More vendor feeds** in the catalog.
 - [x] Workarounds from the advisory, as their own field, for when upgrading
   has to wait.
 - [x] Advisories for a product since a given date, so an agent can ask what
@@ -54,15 +53,17 @@ Still open here:
 
 - **Accept an SBOM or image-scanner output**, which covers what is inside an
   image without this project becoming a scanner.
-- **Accept raw workload listings**, such as `kubectl` output, so the agent
-  does not have to pull image references out itself.
-- **Larger batches**, with progress reported while they run.
+- [x] Accept raw workload listings, such as `kubectl` output, so the agent
+  does not have to pull image references out itself (`check_images`).
+- [x] Larger batches: 500 images a call, grouped by product and version.
+- **Progress reported** while a large batch runs.
 
 ## 4. A better MCP citizen
 
-- **Prompts** for the common workflows: audit a cluster, plan an upgrade,
+- [x] Prompts for the common workflows: audit a cluster, plan an upgrade,
   look into a CVE.
-- **Resources** for the catalog and for single advisories.
+- [x] A resource for the catalog.
+- **Resources for single advisories.**
 - **OAuth authorization**, as the specification describes it, alongside the
   shared token.
 - **An audit log and a metrics endpoint** for the HTTP transport.
