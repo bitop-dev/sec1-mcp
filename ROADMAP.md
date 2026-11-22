@@ -39,7 +39,6 @@ Follow-ups, also done:
   indexes.
 - [x] Go-based products looked up as Go modules, for exact fixed versions
   where NVD has no version data.
-- **A wider exploited-in-the-wild list** than CISA's alone.
 - [x] Vendor security feeds, for products whose vendor announces fixes
   before the databases catch up. GitLab's is the first.
 - **More vendor feeds** in the catalog.
@@ -51,8 +50,11 @@ Follow-ups, also done:
 
 ## 3. Bigger inputs
 
-- **Accept an SBOM or image-scanner output**, which covers what is inside an
-  image without this project becoming a scanner.
+- [x] Accept an SBOM or image-scanner output, which covers what is inside an
+  image without this project becoming a scanner (`check_sbom`). Language
+  packages are checked.
+- **Operating system packages from an SBOM.** They are reported as not
+  checked today, because lookups for them were not reliable.
 - [x] Accept raw workload listings, such as `kubectl` output, so the agent
   does not have to pull image references out itself (`check_images`).
 - [x] Larger batches: 500 images a call, grouped by product and version.
@@ -68,6 +70,14 @@ Follow-ups, also done:
   shared token.
 - **An audit log and a metrics endpoint** for the HTTP transport.
 - **A listing in the MCP registry.**
+
+## Optional, and only with an account
+
+The server works with no account anywhere, and that stays true. These need
+one, so each would be an option that is off by default:
+
+- **A wider exploited-in-the-wild list.** The candidate source needs an
+  account token.
 
 ## Not planned
 

@@ -60,15 +60,34 @@ claude mcp add sec1 -- /path/to/sec1-mcp/bin/sec1-mcp
 For other clients, and for connecting over HTTP, see
 [docs/agents.md](docs/agents.md).
 
+## No account needed
+
+Every tool works with no account, API key or sign-up of any kind. The server
+only reads public data.
+
+Three settings are optional. None unlocks a feature; each only changes speed
+or access:
+
+| Setting | Needs | What it changes |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | A GitHub account | Raises GitHub's limit from 60 requests an hour. Without it, heavy use slows down or fails for a while. |
+| `NVD_API_KEY` | A free key from NVD | Lets NVD lookups run about ten times faster. Without it they are paced at one every six seconds. |
+| `SEC1_HTTP_TOKEN` | Nothing; you choose it | Protects the HTTP transport. Not used on stdio. |
+
+This is a rule for the project, not an accident: a source that needs an
+account is only ever added as an option, and when it is not configured the
+answer's `coverage` says it was skipped.
+
 ## Tools
 
-All seven are read-only.
+All eight are read-only.
 
 | Tool | Use it to |
 | --- | --- |
 | `check_component` | Get the advisories that apply to one component at one version. |
 | `check_components` | Check up to 25 components at once and get a summary of each. |
 | `check_images` | Check up to 500 container images, given as a list or as raw `kubectl` output. |
+| `check_sbom` | Check the packages inside an image, from an SBOM or scanner report. |
 | `suggest_version` | Find the smallest upgrade that fixes what affects the running version. |
 | `get_advisory` | Get the full record for one CVE, GHSA or other advisory id. |
 | `resolve_component` | See how a name or image is identified, without any lookups. |
@@ -111,9 +130,10 @@ CISA's Known Exploited Vulnerabilities catalog, EPSS, the nuclei-templates
 and Metasploit indexes for public exploit tools, and endoflife.date for
 release lifecycles.
 
-- **It reports each product's own advisories.** It does not scan the
-  libraries or operating system packages inside a container image. Use an
-  image scanner for that.
+- **It is not an image scanner.** The product tools report a product's own
+  advisories. `check_sbom` checks the language packages inside an image from
+  an SBOM you supply, and reports operating system packages as not checked.
+  Use an image scanner for those.
 - **It does not guess.** A product outside the catalog is unrecognised until
   you give identifiers for it. `find_identifiers` suggests candidates, which
   someone must confirm.

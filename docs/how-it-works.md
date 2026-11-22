@@ -113,6 +113,26 @@ Versions are compared as dotted numbers with an optional pre-release or
 post-release suffix. When a version or a range cannot be parsed, the server
 does not guess: the advisory is kept, with a note.
 
+## Packages from a bill of materials
+
+`check_sbom` works differently from the product lookups, because a bill of
+materials can list thousands of packages:
+
+1. Package URLs are pulled out of the document and de-duplicated.
+2. Each is sorted by type. Language registry packages with a version are
+   checked; operating system packages, other types, and packages with no
+   version are counted and set aside.
+3. The checkable ones are sent to OSV in batches, which returns the advisory
+   ids for each.
+4. For each package that has any, its full advisory records are fetched, so
+   that records describing the same flaw under different ids merge into one.
+   Up to 300 packages are detailed per call.
+5. Every advisory is then marked, scored and ranked exactly as in a product
+   lookup: exploited in the wild, EPSS, public exploit tools, priority.
+
+Only OSV is used here. The other sources work from product names, and a
+package URL already names its registry and version exactly.
+
 ## Status
 
 | Status | Given when |
@@ -178,8 +198,9 @@ a dropped call.
 
 ## What the server will not do
 
-- **Scan images.** It reports a product's own advisories, not those of the
-  libraries and operating system packages bundled with it.
+- **Scan images.** It checks the language packages in a bill of materials
+  you supply, but it does not produce one, and it does not check operating
+  system packages.
 - **Guess.** A name outside the catalog is unrecognised until identifiers
   are given. `find_identifiers` returns candidates and applies none.
 - **Judge configuration.** Whether a vulnerable feature is switched on, or

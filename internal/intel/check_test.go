@@ -33,6 +33,21 @@ func (f *fake) client() *Client {
 		}
 		body, _ := io.ReadAll(r.Body)
 		vulns := []map[string]any{}
+		if strings.Contains(string(body), `"purl"`) {
+			// Full records for one package of a bill of materials: the same
+			// flaw under two databases' ids.
+			if strings.Contains(string(body), "pkg:pypi/requests@2.25.0") {
+				vulns = append(vulns,
+					map[string]any{"id": "GHSA-aaaa-bbbb-cccc", "aliases": []string{"CVE-2026-1111"}, "summary": "Secret exfiltration",
+						"database_specific": map[string]string{"severity": "HIGH"},
+						"affected": []map[string]any{{"package": map[string]string{"name": "requests", "ecosystem": "PyPI"},
+							"ranges": []map[string]any{{"events": []map[string]string{{"introduced": "0"}, {"fixed": "2.31.0"}}}}}}},
+					map[string]any{"id": "PYSEC-2026-1", "aliases": []string{"GHSA-aaaa-bbbb-cccc", "CVE-2026-1111"}, "details": "Same flaw."},
+					map[string]any{"id": "GHSA-dddd-eeee-ffff", "summary": "Another flaw", "database_specific": map[string]string{"severity": "LOW"}})
+			}
+			reply(w, map[string]any{"vulns": vulns})
+			return
+		}
 		if strings.Contains(string(body), `"1.106.6"`) || !strings.Contains(string(body), `"version"`) {
 			vulns = append(vulns, map[string]any{
 				"id": "GHSA-aaaa-bbbb-cccc", "aliases": []string{"CVE-2026-1111"},
@@ -48,11 +63,42 @@ func (f *fake) client() *Client {
 		reply(w, map[string]any{"vulns": vulns})
 	})
 	mux.HandleFunc("/osv/v1/vulns/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/GHSA-aaaa-bbbb-cccc") {
-			reply(w, map[string]any{"id": "GHSA-aaaa-bbbb-cccc", "aliases": []string{"CVE-2026-1111"}, "summary": "Secret exfiltration", "details": "Long text."})
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/GHSA-aaaa-bbbb-cccc"):
+			reply(w, map[string]any{"id": "GHSA-aaaa-bbbb-cccc", "aliases": []string{"CVE-2026-1111"}, "summary": "Secret exfiltration", "details": "Long text.",
+				"database_specific": map[string]string{"severity": "HIGH"},
+				"affected": []map[string]any{{"package": map[string]string{"name": "requests", "ecosystem": "PyPI"},
+					"ranges": []map[string]any{{"events": []map[string]string{{"introduced": "0"}, {"fixed": "2.31.0"}}}}}}})
+		case strings.HasSuffix(r.URL.Path, "/PYSEC-2026-1"):
+			// The same flaw under another database's id.
+			reply(w, map[string]any{"id": "PYSEC-2026-1", "aliases": []string{"GHSA-aaaa-bbbb-cccc", "CVE-2026-1111"}, "details": "Same flaw."})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	// Batch lookups by package URL: requests is affected, anything else is not.
+	mux.HandleFunc("/osv/v1/querybatch", func(w http.ResponseWriter, r *http.Request) {
+		if f.osvDown {
+			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
-		http.NotFound(w, r)
+		var body struct {
+			Queries []struct {
+				Package struct {
+					PURL string `json:"purl"`
+				} `json:"package"`
+			} `json:"queries"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		results := []map[string]any{}
+		for _, query := range body.Queries {
+			vulns := []map[string]string{}
+			if query.Package.PURL == "pkg:pypi/requests@2.25.0" {
+				vulns = append(vulns, map[string]string{"id": "GHSA-aaaa-bbbb-cccc"}, map[string]string{"id": "PYSEC-2026-1"}, map[string]string{"id": "GHSA-gone-gone-gone"})
+			}
+			results = append(results, map[string]any{"vulns": vulns})
+		}
+		reply(w, map[string]any{"results": results})
 	})
 
 	// GitHub: one advisory whose range excludes 1.106.6, one that includes it.
@@ -671,5 +717,92 @@ func TestLatestUsesTheProductsOwnTags(t *testing.T) {
 	latest, err := client.Latest(context.Background(), Component{Name: "ingress-nginx", Repo: "kubernetes/ingress-nginx", TagPrefix: "controller-v"})
 	if err != nil || latest != "1.15.1" {
 		t.Errorf("latest = %q, err = %v; the chart's tag must not be mistaken for the controller's", latest, err)
+	}
+}
+
+func TestParsePURL(t *testing.T) {
+	cases := []struct {
+		text, purl, kind, name, version string
+	}{
+		{"pkg:pypi/requests@2.25.0", "pkg:pypi/requests@2.25.0", "pypi", "requests", "2.25.0"},
+		{"pkg:npm/%40babel/traverse@7.0.0", "pkg:npm/%40babel/traverse@7.0.0", "npm", "@babel/traverse", "7.0.0"},
+		{"pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1?type=jar", "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1", "maven", "org.apache.logging.log4j:log4j-core", "2.14.1"},
+		{"pkg:golang/k8s.io/kubernetes@v1.28.4#pkg/api", "pkg:golang/k8s.io/kubernetes@v1.28.4", "golang", "k8s.io/kubernetes", "v1.28.4"},
+		{"pkg:deb/debian/openssl@3.0.11-1~deb12u2?arch=amd64&distro=debian-12", "pkg:deb/debian/openssl@3.0.11-1~deb12u2", "deb", "debian/openssl", "3.0.11-1~deb12u2"},
+		{"pkg:pypi/django", "pkg:pypi/django", "pypi", "django", ""},
+	}
+	for _, c := range cases {
+		pkg, ok := ParsePURL(c.text)
+		if !ok || pkg.PURL != c.purl || pkg.Type != c.kind || pkg.Name != c.name || pkg.Version != c.version {
+			t.Errorf("ParsePURL(%q) = %+v, %v", c.text, pkg, ok)
+		}
+	}
+	for _, text := range []string{"", "requests@2.25.0", "pkg:", "pkg:pypi", "pkg:PyPI/x@1", "https://example.invalid/pkg:pypi/x"} {
+		if pkg, ok := ParsePURL(text); ok {
+			t.Errorf("ParsePURL(%q) = %+v; want it refused", text, pkg)
+		}
+	}
+}
+
+func TestCheckPackages(t *testing.T) {
+	f := &fake{t: t}
+	result := f.client().CheckPackages(context.Background(), []string{
+		"pkg:pypi/requests@2.25.0",
+		"pkg:pypi/requests@2.25.0?extra=1", // the same package again
+		"pkg:npm/lodash@4.17.21",
+		"pkg:deb/debian/openssl@3.0.11-1~deb12u2?distro=debian-12",
+		"pkg:apk/alpine/busybox@1.36.1-r5",
+		"pkg:pypi/django",
+		"not a purl",
+	})
+	if result.Status != StatusAffected {
+		t.Fatalf("status = %q (%s)", result.Status, result.Reason)
+	}
+	if result.PackagesFound != 5 || result.Checked != 2 || result.Affected != 1 || result.NotCheckedCount != 2 || result.NoVersion != 1 {
+		t.Errorf("found %d, checked %d, affected %d, not checked %d, no version %d", result.PackagesFound, result.Checked, result.Affected, result.NotCheckedCount, result.NoVersion)
+	}
+	if result.NotChecked["deb"] != 1 || result.NotChecked["apk"] != 1 {
+		t.Errorf("notChecked = %v", result.NotChecked)
+	}
+	if !strings.Contains(result.Reason, "3 of the 5 packages were not checked") {
+		t.Errorf("the reason must say what was not checked: %q", result.Reason)
+	}
+
+	requests := result.Packages[0]
+	// GHSA and PYSEC describe one flaw, so three records make two advisories.
+	if requests.Name != "requests" || requests.TotalAdvisories != 2 {
+		t.Fatalf("requests = %+v", requests)
+	}
+	merged := requests.Advisories[0]
+	if merged.ID != "GHSA-aaaa-bbbb-cccc" || !merged.Exploited || merged.Priority != "urgent" || len(merged.PublicExploits) != 1 {
+		t.Errorf("the merged advisory should be exploited, urgent and carry the scanner template: %+v", merged)
+	}
+	if strings.Join(merged.FixedIn, ",") != "2.31.0" {
+		t.Errorf("fixedIn = %v", merged.FixedIn)
+	}
+	if result.Unranked != 0 || result.Counts.Urgent != 1 || result.Counts.Normal != 1 {
+		t.Errorf("unranked = %d, counts = %+v", result.Unranked, result.Counts)
+	}
+}
+
+func TestCheckPackagesIsOnlyCleanWhenEverythingWasChecked(t *testing.T) {
+	f := &fake{t: t}
+	client := f.client()
+	if clean := client.CheckPackages(context.Background(), []string{"pkg:npm/lodash@4.17.21", "pkg:cargo/serde@1.0.200"}); clean.Status != StatusNoKnown {
+		t.Errorf("all checked and clean: status = %q (%s)", clean.Status, clean.Reason)
+	}
+	mixed := client.CheckPackages(context.Background(), []string{"pkg:npm/lodash@4.17.21", "pkg:deb/debian/openssl@3.0.11"})
+	if mixed.Status != StatusUnknown || !strings.Contains(mixed.Reason, "Do not treat this as safe") {
+		t.Errorf("an unchecked OS package must keep the answer from being clean: %q (%s)", mixed.Status, mixed.Reason)
+	}
+	if none := client.CheckPackages(context.Background(), []string{"nothing here"}); none.Status != StatusUnknown {
+		t.Errorf("no packages at all: status = %q", none.Status)
+	}
+
+	down := &fake{t: t, osvDown: true}
+	offline := down.client()
+	offline.RetryDelays = nil
+	if failed := offline.CheckPackages(context.Background(), []string{"pkg:npm/lodash@4.17.21"}); failed.Status != StatusUnknown {
+		t.Errorf("database down: status = %q", failed.Status)
 	}
 }

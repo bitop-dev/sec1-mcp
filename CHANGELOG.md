@@ -8,6 +8,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `check_sbom`: checks the packages inside an image from a software bill of
+  materials or scanner report (CycloneDX, SPDX, Syft, Trivy), or from a
+  list of package URLs. Packages from eleven language registries are checked
+  by exact version. Operating system packages are counted and reported as
+  not checked, and keep the answer from being reported as clean.
 - `check_images`: checks up to 500 container images in one call, given as a
   list or as raw `kubectl` output. Images that are the same product at the
   same version share one check; unrecognised images are listed and not

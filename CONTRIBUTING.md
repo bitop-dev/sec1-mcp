@@ -25,6 +25,10 @@ SEC1_LIVE=1 go test ./internal/server -run TestLive -v
 - **A failed or missing lookup is never reported as clean.** If a source
   cannot be asked, the status is `unknown` and the source appears as `failed`
   in `coverage`.
+- **No account needed.** Every tool works with no account, API key or
+  sign-up. A source that needs one may only be added as an option that is
+  off by default, and when it is not configured the answer's `coverage` must
+  say it was skipped.
 - **No guessing.** A product the catalog does not know is `unrecognised`.
   Do not add fuzzy name matching.
 - **Tools stay read-only**, and the hosts the server calls stay fixed in the

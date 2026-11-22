@@ -1,6 +1,6 @@
 # Tool reference
 
-All seven tools are read-only. Each returns structured content that matches
+All eight tools are read-only. Each returns structured content that matches
 its output schema, and the same JSON as text for clients that read only text.
 
 Invalid input and failed lookups come back as a tool result with `isError`
@@ -298,6 +298,79 @@ The example is shortened to one of its seven groups.
 - **A large listing can run out of time.** Groups that were not reached come
   back as `unknown`. Calling again continues, because earlier answers are
   cached.
+
+## check_sbom
+
+Checks the packages inside an image against known advisories, by exact
+version. It reads a software bill of materials or scanner report that you
+supply; it does not scan anything itself.
+
+| Field | Meaning |
+| --- | --- |
+| `document` | The SBOM or report as text: CycloneDX, SPDX, Syft or Trivy output, in JSON or XML. Up to 4 MB. |
+| `purls` | Package URLs, such as `pkg:pypi/requests@2.25.0`. Much smaller than a whole document. |
+| `limit` | The most affected packages to return. Default 25, at most 100. |
+
+Give `document`, `purls`, or both. Package URLs are found in the document by
+their `pkg:` prefix, whatever its format. To send only the package URLs:
+
+```sh
+syft <image> -o cyclonedx-json | jq -r '.. | .purl? // empty' | sort -u
+```
+
+```json
+{"purls": ["pkg:pypi/pillow@8.1.0", "pkg:npm/lodash@4.17.20", "pkg:deb/debian/openssl@3.0.11-1~deb12u2"]}
+```
+
+```json
+{
+  "status": "affected",
+  "reason": "21 of 22 checked packages have known advisories. 13 of the 35 packages were not checked (12 deb); use an image scanner for operating system packages.",
+  "packagesFound": 35,
+  "checked": 22,
+  "affected": 21,
+  "notChecked": {"deb": 12},
+  "notCheckedCount": 12,
+  "noVersion": 1,
+  "counts": {"urgent": 32, "high": 150, "normal": 158, "exploited": 4, "publicExploit": 8},
+  "packages": [
+    {
+      "purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+      "name": "org.apache.logging.log4j:log4j-core",
+      "version": "2.14.1",
+      "type": "maven",
+      "counts": {"urgent": 2, "high": 2, "normal": 4, "exploited": 2, "publicExploit": 2},
+      "totalAdvisories": 8
+    }
+  ]
+}
+```
+
+The example is real output for a 35-package sample, shortened to one
+package and without its advisories.
+
+**What is checked.** Packages from language registries: PyPI, npm, Go,
+Maven, Cargo, RubyGems, NuGet, Composer, Hex, pub and Swift. Each is looked
+up in OSV by its exact version.
+
+**What is not.** Operating system packages (`deb`, `apk`, `rpm`) and any
+other type. They are counted in `notChecked` by type and were not looked up.
+OSV does hold advisories for them, but lookups by package URL gave different
+answers for the same package depending on how the distribution was written,
+and none for Alpine, so a result built on them would look more certain than
+it is. Packages with no version are counted in `noVersion`.
+
+**Status.** `affected` when any checked package has advisories.
+`no_known_advisories` only when every package found was checked and none has
+any. Otherwise `unknown`: an SBOM with operating system packages and no
+affected language packages is `unknown`, not clean, and the reason says how
+many packages were left out.
+
+Each affected package carries its counts and its three most urgent
+advisories, in the same form as `check_component`; use `get_advisory` for
+others. Packages are ordered by exploited, then urgent, then high. `unranked`
+counts advisories whose details could not be fetched; they are counted as
+normal and may be worse.
 
 ## suggest_version
 

@@ -69,7 +69,7 @@ func TestToolsAreListedReadOnlyWithSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"check_component", "check_components", "check_images", "find_identifiers", "get_advisory", "resolve_component", "suggest_version"}
+	want := []string{"check_component", "check_components", "check_images", "check_sbom", "find_identifiers", "get_advisory", "resolve_component", "suggest_version"}
 	var names []string
 	for _, tool := range list.Tools {
 		names = append(names, tool.Name)
@@ -323,6 +323,31 @@ func TestPromptsAndCatalogResource(t *testing.T) {
 	}
 }
 
+func TestCheckSBOMFindsPackageURLsInADocument(t *testing.T) {
+	session := connect(t, offline())
+	cycloneDX := `{"bomFormat":"CycloneDX","components":[
+		{"type":"library","name":"requests","version":"2.25.0","purl":"pkg:pypi/requests@2.25.0"},
+		{"type":"library","name":"openssl","purl":"pkg:deb/debian/openssl@3.0.11-1~deb12u2?arch=amd64&distro=debian-12",
+		 "components":[{"type":"library","purl":"pkg:npm/%40babel/core@7.0.0"}]}]}`
+	result, structured := call(t, session, "check_sbom", map[string]any{"document": cycloneDX, "purls": []string{"pkg:pypi/requests@2.25.0"}})
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %v", result.Content)
+	}
+	if structured["packagesFound"] != float64(3) || structured["notCheckedCount"] != float64(1) {
+		t.Errorf("packagesFound = %v, notCheckedCount = %v; want 3 distinct packages, 1 of them an OS package", structured["packagesFound"], structured["notCheckedCount"])
+	}
+	// Nothing can be reached in this test, so the answer must not be clean.
+	if structured["status"] != "unknown" {
+		t.Errorf("status = %v, want unknown", structured["status"])
+	}
+
+	for _, arguments := range []map[string]any{{}, {"document": "no package urls in here"}, {"purls": []string{"requests==2.25.0"}}} {
+		if result, _ := call(t, session, "check_sbom", arguments); !result.IsError {
+			t.Errorf("arguments %v should be rejected: they hold no package URLs", arguments)
+		}
+	}
+}
+
 // TestLive runs against the real services. It is skipped unless SEC1_LIVE is
 // set, so the normal test run needs no network.
 func TestLive(t *testing.T) {
@@ -358,6 +383,13 @@ func TestLive(t *testing.T) {
 	show("check_component", map[string]any{"image": "grafana/grafana:8.2.0", "limit": 4})
 	show("check_component", map[string]any{"name": "LiteLLM", "version": "1.106.6", "since": "2026-11-13"})
 	show("get_advisory", map[string]any{"id": "CVE-2021-43798"})
+	sbom := show("check_sbom", map[string]any{"limit": 3, "purls": []string{
+		"pkg:pypi/requests@2.25.0", "pkg:npm/lodash@4.17.20", "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+		"pkg:golang/golang.org/x/net@v0.30.0", "pkg:pypi/certifi@2026.11.2", "pkg:deb/debian/openssl@3.0.11-1~deb12u2?distro=debian-12",
+	}})
+	if sbom["status"] != "affected" || sbom["notCheckedCount"] != float64(1) {
+		t.Errorf("check_sbom: status = %v, notCheckedCount = %v", sbom["status"], sbom["notCheckedCount"])
+	}
 	show("check_images", map[string]any{"text": "image: gitlab/gitlab-ee:19.5.0-ee.0\nimage: registry.k8s.io/ingress-nginx/controller:v1.11.3\nimage: postgres:16.4\nimage: example.edu/team/mystery:1.0\n"})
 	show("get_advisory", map[string]any{"id": "CVE-2026-42208"})
 }

@@ -64,7 +64,7 @@ Each answer also says whether the version's release line has reached end of life
 
 Read the "status" field of every answer. "unknown" means the server could not determine the answer; it never means safe. "possibly_affected" means a match by product name only. The "coverage" field says which sources were checked, skipped or failed.
 
-This server only reports each product's own advisories. It does not scan the libraries or operating system packages inside a container image.
+The image and component tools report each product's own advisories, not what is bundled inside an image. For that, pass an SBOM or its package URLs to check_sbom, which checks language packages and reports operating system packages as not checked.
 
 All tools are read-only. ` + untrustedNotice
 
@@ -106,6 +106,9 @@ func New(deps Deps) *mcp.Server {
 	add(server, t, "check_images", "Check a list of container images",
 		fmt.Sprintf("Checks up to %d container images in one call, given as a list or as the raw output of a command such as kubectl get pods. Images that are the same product at the same version share one check. Returns a summary per product version, most urgent first, and lists the images it does not recognise, which are not checked. Use it to audit what is running in a cluster.", maxImages),
 		t.checkImages)
+	add(server, t, "check_sbom", "Check the packages in an SBOM",
+		fmt.Sprintf("Checks the packages listed in a software bill of materials or scanner report (CycloneDX, SPDX, Syft, Trivy) against known advisories, by exact version. Give the document, or just its package URLs. Checks packages from language registries; operating system packages are counted and reported as not checked. Up to %d packages a call. Use it for what is inside an image, which the other tools do not cover.", maxPackages),
+		t.checkSBOM)
 	add(server, t, "suggest_version", "Suggest an upgrade",
 		"Given a component and the version running, works out the smallest upgrade that includes a fix for every advisory affecting it, then checks that version and the latest release against all sources instead of assuming they are clean.",
 		t.suggestVersion)

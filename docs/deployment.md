@@ -27,6 +27,10 @@ Both follow MCP specification revision 2026-07-28.
 Tokens are read from the environment only, so they never appear in a
 process listing, and they are never logged or cached.
 
+None of them is required. The server needs no account anywhere: `GITHUB_TOKEN`
+and `NVD_API_KEY` only raise rate limits, and `SEC1_HTTP_TOKEN` is a secret
+you choose yourself.
+
 ## stdio
 
 ```sh
