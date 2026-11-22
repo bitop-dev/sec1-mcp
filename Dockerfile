@@ -2,7 +2,7 @@
 
 # The build stage runs on the builder's own architecture and cross-compiles,
 # so building for another platform needs no emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27 AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
