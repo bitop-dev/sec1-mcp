@@ -14,9 +14,10 @@ import (
 // fake stands in for every advisory service. Each handler is small enough to
 // read as the scenario it sets up.
 type fake struct {
-	t        *testing.T
-	osvDown  bool
-	nvdCalls int
+	t              *testing.T
+	osvDown        bool
+	metasploitDown bool
+	nvdCalls       int
 }
 
 func (f *fake) client() *Client {
@@ -80,6 +81,28 @@ func (f *fake) client() *Client {
 		reply(w, map[string]any{"totalResults": len(cves), "resultsPerPage": len(cves), "vulnerabilities": cves})
 	})
 
+	// Lifecycle data: line 16 is supported, line 12 has ended.
+	mux.HandleFunc("/lifecycle/postgresql/", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, map[string]any{"result": map[string]any{"releases": []map[string]any{
+			{"name": "17", "isEol": false, "eolFrom": "2029-11-08", "latest": map[string]string{"name": "17.2"}},
+			{"name": "16", "isEol": false, "eolFrom": "2028-11-09", "latest": map[string]string{"name": "16.6"}},
+			{"name": "12", "isEol": true, "eolFrom": "2024-11-21", "latest": map[string]string{"name": "12.22"}},
+		}}})
+	})
+	// Public exploit lists: a scanner template for one CVE, a module for another.
+	mux.HandleFunc("/nuclei", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ID":"CVE-2026-1111","Info":{"Name":"x"},"file_path":"a.yaml"}` + "\n" + `{"ID":"CVE-2020-0001","Info":{},"file_path":"b.yaml"}` + "\n"))
+	})
+	mux.HandleFunc("/metasploit", func(w http.ResponseWriter, r *http.Request) {
+		if f.metasploitDown {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		reply(w, map[string]any{
+			"exploit_multi/http/example": map[string]any{"references": []string{"CVE-2026-5555", "URL-https://example.invalid"}},
+		})
+	})
+
 	// Name searches, for find_identifiers.
 	mux.HandleFunc("/pypi/pypi/redis/json", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, map[string]any{"info": map[string]string{"name": "redis", "summary": "Python client for Redis database and key-value store", "version": "6.0.0"}})
@@ -125,6 +148,7 @@ func (f *fake) client() *Client {
 		Endpoints: Endpoints{
 			OSV: server.URL + "/osv", GitHub: server.URL + "/github", NVD: server.URL + "/nvd", NVDProducts: server.URL + "/nvdproducts",
 			KEV: server.URL + "/kev", EPSS: server.URL + "/epss", PyPI: server.URL + "/pypi", NPM: server.URL + "/npm",
+			Lifecycle: server.URL + "/lifecycle", Nuclei: server.URL + "/nuclei", Metasploit: server.URL + "/metasploit",
 		},
 	}
 }
@@ -403,5 +427,169 @@ func TestCandidates(t *testing.T) {
 		if entry.Status != "checked" {
 			t.Errorf("coverage %+v: a registry with no such package is checked, not failed", entry)
 		}
+	}
+}
+
+func coverageOf(result Result, source string) Coverage {
+	for _, entry := range result.Coverage {
+		if entry.Source == source {
+			return entry
+		}
+	}
+	return Coverage{}
+}
+
+func TestSupportStatus(t *testing.T) {
+	f := &fake{t: t}
+	client := f.client()
+	postgres := func(v string) Component {
+		return Component{Name: "pg-test", Version: v, CPE: "postgresql:postgresql", Lifecycle: "postgresql"}
+	}
+
+	supported := client.Check(context.Background(), postgres("16.4"))
+	if s := supported.Support; s.Status != SupportSupported || s.ReleaseLine != "16" || s.LatestInLine != "16.6" || s.EndOfLife != "2028-11-09" {
+		t.Errorf("16.4: support = %+v", s)
+	}
+	// The lifecycle data supplies the latest release when nothing else does.
+	if supported.LatestVersion != "17.2" || supported.VersionStatus != "behind" {
+		t.Errorf("16.4: latest = %q, versionStatus = %q", supported.LatestVersion, supported.VersionStatus)
+	}
+
+	ended := client.Check(context.Background(), postgres("12.5"))
+	if ended.Support.Status != SupportEnded {
+		t.Errorf("12.5: support = %+v, want end_of_life", ended.Support)
+	}
+	if !strings.Contains(ended.Reason, "end of life on 2024-11-21") {
+		t.Errorf("12.5: the reason should say the line has ended: %q", ended.Reason)
+	}
+
+	for name, component := range map[string]Component{
+		"a line the data does not list": postgres("9.6.1"),
+		"no version":                    postgres(""),
+		"no lifecycle data":             {Name: "pg-test", Version: "16.4", CPE: "postgresql:postgresql"},
+	} {
+		if got := client.Check(context.Background(), component).Support.Status; got != SupportUnknown {
+			t.Errorf("%s: support status = %q, want unknown", name, got)
+		}
+	}
+	// "160" must not be read as release line "16".
+	if got := client.Check(context.Background(), postgres("160.1")).Support.Status; got != SupportUnknown {
+		t.Errorf("160.1 matched a release line: %q", got)
+	}
+}
+
+func TestPublicExploitsRaisePriority(t *testing.T) {
+	f := &fake{t: t}
+	result := f.client().Check(context.Background(), litellm)
+
+	targeted := find(t, result, "GHSA-aaaa-bbbb-cccc") // alias CVE-2026-1111 has a scanner template
+	if targeted == nil || len(targeted.PublicExploits) != 1 || targeted.PublicExploits[0] != "nuclei-template" {
+		t.Fatalf("publicExploits = %+v", targeted)
+	}
+	if !strings.Contains(targeted.Rationale, "public scanner or exploit tool") {
+		t.Errorf("the rationale should mention it: %q", targeted.Rationale)
+	}
+	if other := find(t, result, "GHSA-dddd-eeee-ffff"); other == nil || len(other.PublicExploits) != 0 {
+		t.Errorf("an advisory with no CVE must carry no exploit flags: %+v", other)
+	}
+	if result.Counts.PublicExploit != 1 {
+		t.Errorf("counts.publicExploit = %d, want 1", result.Counts.PublicExploit)
+	}
+
+	medium := Advisory{Severity: "medium", PublicExploits: []string{"metasploit-module"}}
+	triage(&medium)
+	if medium.Priority != "high" {
+		t.Errorf("a medium advisory with a public exploit should be high, got %s", medium.Priority)
+	}
+}
+
+func TestOneExploitListDownIsReportedNotHidden(t *testing.T) {
+	f := &fake{t: t, metasploitDown: true}
+	client := f.client()
+	client.RetryDelays = nil
+	result := client.Check(context.Background(), litellm)
+	entry := coverageOf(result, "public-exploits")
+	if entry.Status != "checked" || !strings.Contains(entry.Detail, "metasploit-module") {
+		t.Errorf("coverage = %+v; want checked, naming the list that failed", entry)
+	}
+	if targeted := find(t, result, "GHSA-aaaa-bbbb-cccc"); targeted == nil || len(targeted.PublicExploits) != 1 {
+		t.Error("the list that did load should still be applied")
+	}
+}
+
+func TestWorkaroundExtraction(t *testing.T) {
+	cases := map[string]string{
+		"### Impact\nBad.\n\n### Patches\n1.2.3\n\n### Workarounds\nSet `auth.enabled: true`\nand restart.\n\n### References\nnone": "Set `auth.enabled: true` and restart.",
+		"## Workaround\nBlock the /admin path at the proxy.":                                                                        "Block the /admin path at the proxy.",
+		"### Workarounds\nNone.\n\n### References":                                                                                  "",
+		"### Workarounds\n_No workarounds are available._":                                                                          "",
+		"### Workarounds\nThere are no known workarounds.":                                                                          "",
+		"### Impact\nNo workarounds heading here.":                                                                                  "",
+		"": "",
+	}
+	for markdown, want := range cases {
+		if got := workaround(markdown); got != want {
+			t.Errorf("workaround(%q) = %q, want %q", markdown, got, want)
+		}
+	}
+}
+
+func TestProductFiledUnderTwoNVDNames(t *testing.T) {
+	f := &fake{t: t}
+	client := f.client()
+	client.Check(context.Background(), Component{Name: "two-names", Version: "1.0.0", CPE: "f5:nginx", OtherCPEs: []string{"f5:nginx_open_source"}})
+	if f.nvdCalls != 2 {
+		t.Errorf("NVD was asked %d times, want once per product name", f.nvdCalls)
+	}
+}
+
+func TestGoModuleForTheVersionsMajor(t *testing.T) {
+	traefik := Component{Ecosystem: "Go", Package: "github.com/traefik/traefik", OtherPackages: []string{"github.com/traefik/traefik/v2", "github.com/traefik/traefik/v3"}}
+	grafana := Component{Ecosystem: "Go", Package: "github.com/grafana/grafana"}
+	cases := []struct {
+		component Component
+		version   string
+		want      string
+	}{
+		{traefik, "3.1.0", "github.com/traefik/traefik/v3"},
+		{traefik, "v2.10.0", "github.com/traefik/traefik/v2"},
+		{traefik, "1.7.34", "github.com/traefik/traefik"},
+		{traefik, "4.0.0", "github.com/traefik/traefik"}, // no /v4 path is known, so the base path is asked
+		{traefik, "", "github.com/traefik/traefik,github.com/traefik/traefik/v2,github.com/traefik/traefik/v3"},
+		{grafana, "11.3.0", "github.com/grafana/grafana"}, // Grafana never adopted /vN paths
+		{Component{Ecosystem: "PyPI", Package: "litellm", OtherPackages: []string{"litellm-proxy"}}, "2.0.0", "litellm,litellm-proxy"},
+	}
+	for _, c := range cases {
+		c.component.Version = c.version
+		if got := strings.Join(c.component.packages(), ","); got != c.want {
+			t.Errorf("version %q: packages = %s, want %s", c.version, got, c.want)
+		}
+	}
+}
+
+func TestNVDSkipsCVEsWhereTheProductIsOnlyAPlatform(t *testing.T) {
+	match := func(criteria string, vulnerable bool) nvdCVE {
+		var cve nvdCVE
+		_ = json.Unmarshal([]byte(`{"configurations":[{"nodes":[{"cpeMatch":[{"criteria":"`+criteria+`","vulnerable":`+map[bool]string{true: "true", false: "false"}[vulnerable]+`}]}]}]}`), &cve)
+		return cve
+	}
+	prefix := "cpe:2.3:a:postgresql:postgresql:"
+	if !match(prefix+"*:*:*:*:*:*:*:*", true).vulnerableIn(prefix) {
+		t.Error("a CVE marking the product vulnerable must be kept")
+	}
+	if match(prefix+"*:*:*:*:*:*:*:*", false).vulnerableIn(prefix) {
+		t.Error("a CVE listing the product only as a platform must be skipped")
+	}
+	if !(nvdCVE{}).vulnerableIn(prefix) {
+		t.Error("a CVE with no applicability data must be kept")
+	}
+}
+
+func TestGoPseudoVersionsAreNotOfferedAsFixes(t *testing.T) {
+	var vuln osvVuln
+	_ = json.Unmarshal([]byte(`{"affected":[{"package":{"name":"github.com/grafana/grafana"},"ranges":[{"events":[
+		{"introduced":"0"},{"fixed":"1.9.2-0.20260616075434-82ef13993059"},{"fixed":"11.6.14"}]}]}]}`), &vuln)
+	if got := strings.Join(vuln.fixedFor("github.com/grafana/grafana"), ","); got != "11.6.14" {
+		t.Errorf("fixedFor = %q, want only the release", got)
 	}
 }

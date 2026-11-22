@@ -33,8 +33,11 @@ it. There are three ways to check software it does not know:
 | `name` | The display name, and one of the names the product is found by. |
 | `aliases` | Other names: what people type, and what CISA's exploited list calls the vendor or product. |
 | `ecosystem`, `package` | OSV lookups, with exact version matching. Also the latest release, for PyPI and npm. |
+| `otherPackages` | Further package names for the same product. For Go, list the module's `/v2`, `/v3` paths here; only the one for the running version's major is asked. |
 | `repo` | The upstream GitHub repository's security advisories, and its releases. |
 | `cpe` | NVD lookups, as `vendor:product`. Also what lets name-only matches from CISA's list be cleared. |
+| `otherCpes` | Further names NVD files the same product under. |
+| `lifecycle` | The product's name in endoflife.date's data, for end-of-life status and the latest release. |
 | `gitlabRepo` | A gitlab.com project, used only to find the latest release. |
 | `images` | Container image repositories, without registry host or tag. |
 
@@ -109,13 +112,16 @@ A wrong identifier is worse than a missing one: it makes the server report
 on different software. Leave a field out if you cannot confirm it.
 
 Every identifier in the built-in catalog was checked when it was added: the
-repository and its advisories on GitHub, the product name against NVD, and
+repository and its advisories on GitHub, the product name against NVD, the
+package name against OSV, the lifecycle name against endoflife.date, and
 each image name against its registry. Registries and vendors do rename
 things, so corrections are welcome.
 
-Two known gaps:
+Known gaps:
 
-- **nginx** is filed in NVD under two product names. The catalog uses the
-  one NVD uses for current CVEs, so older ones are not matched.
-- **PostgreSQL, nginx and ingress-nginx** have no source for the latest
-  release, so `latestVersion` is empty for them.
+- **ingress-nginx** has no source for the latest release or for lifecycle
+  data, so `latestVersion` is empty and `support` is `unknown` for it.
+- **LiteLLM, vLLM, Onyx, Ollama and Open WebUI** have no lifecycle data, so
+  `support` is `unknown` for them.
+- **Prometheus** is not looked up as a Go module, because its module
+  versions do not match its release versions.

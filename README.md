@@ -10,7 +10,8 @@ It is a lookup tool: it holds no inventory and needs no configuration. An
 agent that can see your systems (for example, one listing the container
 images in a Kubernetes cluster) passes what it finds to this server and gets
 back, for each item: whether advisories apply to that version, which are being
-exploited, what version fixes them, and how sure the answer is.
+exploited or have public exploit tools, what version fixes them, whether the
+release line is still supported, and how sure the answer is.
 
 ```json
 {"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable"}
@@ -101,7 +102,9 @@ Every answer has a `status`:
 ## What it covers, and what it does not
 
 Sources: OSV, the upstream GitHub repository's security advisories, NVD,
-CISA's Known Exploited Vulnerabilities catalog, and EPSS.
+CISA's Known Exploited Vulnerabilities catalog, EPSS, the nuclei-templates
+and Metasploit indexes for public exploit tools, and endoflife.date for
+release lifecycles.
 
 - **It reports each product's own advisories.** It does not scan the
   libraries or operating system packages inside a container image. Use an

@@ -58,6 +58,8 @@ const instructions = `Looks up known security advisories for software you run or
 
 Identify a component by product name ("LiteLLM"), by container image reference ("ghcr.io/berriai/litellm:main-v1.106.6-stable"), or by explicit identifiers (ecosystem and package, GitHub repo, or NVD cpe). Only a catalog of common product names and images is recognised; for anything else, pass explicit identifiers. find_identifiers suggests candidates for a name, which you must confirm before use. Give a version whenever you know it: without one the answer lists a product's whole advisory history.
 
+Each answer also says whether the version's release line has reached end of life ("support"), and marks advisories that a public scanner or exploit tool already targets ("publicExploits"). To ask only what is new, pass a "since" date.
+
 Read the "status" field of every answer. "unknown" means the server could not determine the answer; it never means safe. "possibly_affected" means a match by product name only. The "coverage" field says which sources were checked, skipped or failed.
 
 This server only reports each product's own advisories. It does not scan the libraries or operating system packages inside a container image.
@@ -148,11 +150,13 @@ type ComponentInput struct {
 
 type checkInput struct {
 	ComponentInput
-	Limit int `json:"limit,omitempty" jsonschema:"most advisories to return, most urgent first; default 20, at most 100"`
+	Limit int    `json:"limit,omitempty" jsonschema:"most advisories to return, most urgent first; default 20, at most 100"`
+	Since string `json:"since,omitempty" jsonschema:"a date as YYYY-MM-DD. Lists only advisories published, or listed as exploited, on or after it. status still describes everything that applies, and olderAdvisories counts what was left out. Use it to ask what is new."`
 }
 
 type batchInput struct {
 	Components []ComponentInput `json:"components" jsonschema:"the components to check, at most 25"`
+	Since      string           `json:"since,omitempty" jsonschema:"a date as YYYY-MM-DD. Counts and lists only advisories published, or listed as exploited, on or after it."`
 }
 
 type findInput struct {
@@ -193,8 +197,11 @@ type checkOutput struct {
 	Counts          intel.Counts      `json:"counts"`
 	LatestVersion   string            `json:"latestVersion,omitempty"`
 	VersionStatus   string            `json:"versionStatus" jsonschema:"current, behind, unknown or not-set"`
+	Support         intel.Support     `json:"support" jsonschema:"whether this version's release line still receives fixes"`
 	Coverage        []intel.Coverage  `json:"coverage"`
 	Advisories      []intel.Advisory  `json:"advisories"`
+	Since           string            `json:"since,omitempty" jsonschema:"the since date applied, if one was given"`
+	OlderAdvisories int               `json:"olderAdvisories" jsonschema:"advisories that apply but were left out because they predate since"`
 	TotalAdvisories int               `json:"totalAdvisories"`
 	Truncated       bool              `json:"truncated" jsonschema:"true when advisories holds fewer than totalAdvisories; raise limit to see more"`
 	Notice          string            `json:"notice"`
@@ -202,14 +209,16 @@ type checkOutput struct {
 
 // ComponentSummary is one row of a batch answer.
 type ComponentSummary struct {
-	Component     ResolvedComponent `json:"component"`
-	Status        string            `json:"status" jsonschema:"affected, possibly_affected, no_known_advisories, version_needed or unknown. unknown never means safe."`
-	Reason        string            `json:"reason"`
-	Counts        intel.Counts      `json:"counts"`
-	LatestVersion string            `json:"latestVersion,omitempty"`
-	VersionStatus string            `json:"versionStatus"`
-	TopAdvisories []string          `json:"topAdvisories" jsonschema:"ids of the most urgent advisories, at most 5"`
-	Failed        []string          `json:"failedSources" jsonschema:"sources that could not be checked for this component"`
+	Component       ResolvedComponent `json:"component"`
+	Status          string            `json:"status" jsonschema:"affected, possibly_affected, no_known_advisories, version_needed or unknown. unknown never means safe."`
+	Reason          string            `json:"reason"`
+	Counts          intel.Counts      `json:"counts"`
+	LatestVersion   string            `json:"latestVersion,omitempty"`
+	VersionStatus   string            `json:"versionStatus"`
+	Support         intel.Support     `json:"support" jsonschema:"whether this version's release line still receives fixes"`
+	OlderAdvisories int               `json:"olderAdvisories" jsonschema:"advisories that apply but were left out because they predate since"`
+	TopAdvisories   []string          `json:"topAdvisories" jsonschema:"ids of the most urgent advisories, at most 5"`
+	Failed          []string          `json:"failedSources" jsonschema:"sources that could not be checked for this component"`
 }
 
 type batchOutput struct {
@@ -255,14 +264,20 @@ func (t *tools) checkComponent(ctx context.Context, input checkInput) (checkOutp
 	case limit > maxAdvisories:
 		limit = maxAdvisories
 	}
+	since, err := parseSince(input.Since)
+	if err != nil {
+		return checkOutput{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, singleDeadline)
 	defer cancel()
 	result := t.Intel.Check(ctx, component)
+	older := onlySince(&result, since)
 
 	output := checkOutput{
 		Component: resolved, Status: result.Status, Reason: result.Reason, Counts: result.Counts,
-		LatestVersion: result.LatestVersion, VersionStatus: result.VersionStatus, Coverage: result.Coverage,
-		Advisories: result.Advisories, TotalAdvisories: len(result.Advisories), Notice: untrustedNotice,
+		LatestVersion: result.LatestVersion, VersionStatus: result.VersionStatus, Support: result.Support,
+		Coverage: result.Coverage, Advisories: result.Advisories, Since: since, OlderAdvisories: older,
+		TotalAdvisories: len(result.Advisories), Notice: untrustedNotice,
 	}
 	if len(output.Advisories) > limit {
 		output.Advisories, output.Truncated = output.Advisories[:limit], true
@@ -285,12 +300,52 @@ func (t *tools) checkComponents(ctx context.Context, input batchInput) (batchOut
 			return batchOutput{}, fmt.Errorf("components[%d]: %w", i, err)
 		}
 	}
-	return t.summarize(ctx, components, resolved), nil
+	since, err := parseSince(input.Since)
+	if err != nil {
+		return batchOutput{}, err
+	}
+	return t.summarize(ctx, components, resolved, since), nil
+}
+
+// parseSince checks a since date and returns it in YYYY-MM-DD form.
+func parseSince(text string) (string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", nil
+	}
+	date, err := time.Parse("2006-01-02", text)
+	if err != nil {
+		return "", errors.New("since must be a date written as YYYY-MM-DD, such as 2026-11-01")
+	}
+	return date.Format("2006-01-02"), nil
+}
+
+// onlySince narrows a result to what is new on or after the date, and
+// returns how many advisories that left out. An advisory counts as new by
+// its publication date or by the date it was listed as exploited, whichever
+// is later. The status is left alone: it still describes everything that
+// applies, so an answer with nothing new is never mistaken for a clean one.
+func onlySince(result *intel.Result, since string) (older int) {
+	if since == "" {
+		return 0
+	}
+	onOrAfter := func(date string) bool { return len(date) >= 10 && date[:10] >= since }
+	kept := []intel.Advisory{}
+	for _, advisory := range result.Advisories {
+		if onOrAfter(advisory.Published) || onOrAfter(advisory.ExploitedSince) {
+			kept = append(kept, advisory)
+		}
+	}
+	older = len(result.Advisories) - len(kept)
+	result.Advisories = kept
+	result.Counts = intel.Count(kept)
+	result.Reason = fmt.Sprintf("Since %s: %d new, %d older not listed. %s", since, len(kept), older, result.Reason)
+	return older
 }
 
 // summarize checks the components a few at a time. One that does not finish
 // before the deadline comes back as "unknown", never as clean.
-func (t *tools) summarize(ctx context.Context, components []intel.Component, resolved []ResolvedComponent) batchOutput {
+func (t *tools) summarize(ctx context.Context, components []intel.Component, resolved []ResolvedComponent, since string) batchOutput {
 	ctx, cancel := context.WithTimeout(ctx, batchDeadline)
 	defer cancel()
 	output := batchOutput{Results: make([]ComponentSummary, len(components)), Notice: untrustedNotice}
@@ -303,10 +358,11 @@ func (t *tools) summarize(ctx context.Context, components []intel.Component, res
 			slots <- struct{}{}
 			defer func() { <-slots }()
 			result := t.Intel.Check(ctx, components[i])
+			older := onlySince(&result, since)
 			summary := ComponentSummary{
 				Component: resolved[i], Status: result.Status, Reason: result.Reason, Counts: result.Counts,
-				LatestVersion: result.LatestVersion, VersionStatus: result.VersionStatus,
-				TopAdvisories: []string{}, Failed: []string{},
+				LatestVersion: result.LatestVersion, VersionStatus: result.VersionStatus, Support: result.Support,
+				OlderAdvisories: older, TopAdvisories: []string{}, Failed: []string{},
 			}
 			for _, advisory := range result.Advisories {
 				if len(summary.TopAdvisories) == topAdvisories {
@@ -496,8 +552,9 @@ func (t *tools) resolve(input ComponentInput) (intel.Component, ResolvedComponen
 
 func toComponent(product catalog.Product) intel.Component {
 	return intel.Component{
-		Name: product.Name, Ecosystem: product.Ecosystem, Package: product.Package,
-		Repo: product.Repo, GitLabRepo: product.GitLabRepo, CPE: product.CPE, Aliases: product.Aliases,
+		Name: product.Name, Ecosystem: product.Ecosystem, Package: product.Package, OtherPackages: product.OtherPackages,
+		Repo: product.Repo, GitLabRepo: product.GitLabRepo, CPE: product.CPE, OtherCPEs: product.OtherCPEs,
+		Lifecycle: product.Lifecycle, Aliases: product.Aliases,
 	}
 }
 

@@ -134,6 +134,8 @@ func TestOwnCatalogIsValidated(t *testing.T) {
 		"image with a tag":   "products:\n  - name: X\n    images: ['a/b:1.0']\n",
 		"image with a host":  "products:\n  - name: X\n    images: ['Registry.Example.edu/a/b']\n",
 		"duplicate name":     "products:\n  - name: X\n  - name: Y\n    aliases: [x]\n",
+		"bad lifecycle name": "products:\n  - name: X\n    lifecycle: Not A Slug\n",
+		"otherCpes alone":    "products:\n  - name: X\n    otherCpes: ['a:b']\n",
 		"duplicate image":    "products:\n  - name: X\n    images: [a/b]\n  - name: Y\n    images: [a/b]\n",
 		"not a catalog file": "products: 7\n",
 	}

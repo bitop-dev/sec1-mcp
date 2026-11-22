@@ -18,14 +18,21 @@ var builtinYAML []byte
 
 // Product is one known piece of software.
 type Product struct {
-	Name       string   `yaml:"name"`
-	Aliases    []string `yaml:"aliases"`
-	Ecosystem  string   `yaml:"ecosystem"`
-	Package    string   `yaml:"package"`
-	Repo       string   `yaml:"repo"`
-	GitLabRepo string   `yaml:"gitlabRepo"`
-	CPE        string   `yaml:"cpe"`
-	Images     []string `yaml:"images"`
+	Name      string   `yaml:"name"`
+	Aliases   []string `yaml:"aliases"`
+	Ecosystem string   `yaml:"ecosystem"`
+	Package   string   `yaml:"package"`
+	// OtherPackages lists further package names for the same product, such
+	// as a Go module's /v2 and /v3 paths.
+	OtherPackages []string `yaml:"otherPackages"`
+	Repo          string   `yaml:"repo"`
+	GitLabRepo    string   `yaml:"gitlabRepo"`
+	CPE           string   `yaml:"cpe"`
+	// OtherCPEs lists further names NVD files the same product under.
+	OtherCPEs []string `yaml:"otherCpes"`
+	// Lifecycle is the product's name in endoflife.date's data.
+	Lifecycle string   `yaml:"lifecycle"`
+	Images    []string `yaml:"images"`
 }
 
 // Catalog holds the products the server recognises.
@@ -76,6 +83,7 @@ var (
 	repoPattern      = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$`)
 	gitlabPattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100})+$`)
 	cpePattern       = regexp.MustCompile(`^([aoh]:)?[A-Za-z0-9._-]{1,100}:[A-Za-z0-9._-]{1,100}$`)
+	lifecyclePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,59}$`)
 	imagePattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,199}$`)
 )
 
@@ -105,6 +113,25 @@ func parse(data []byte, source string) ([]Product, error) {
 			{"repo", product.Repo, repoPattern, "BerriAI/litellm"},
 			{"gitlabRepo", product.GitLabRepo, gitlabPattern, "gitlab-org/gitlab"},
 			{"cpe", product.CPE, cpePattern, "gitlab:gitlab"},
+			{"lifecycle", product.Lifecycle, lifecyclePattern, "postgresql"},
+		}
+		for _, other := range product.OtherCPEs {
+			checks = append(checks, struct {
+				field, value string
+				pattern      *regexp.Regexp
+				example      string
+			}{"otherCpes", other, cpePattern, "f5:nginx_open_source"})
+		}
+		if len(product.OtherCPEs) > 0 && product.CPE == "" {
+			return nil, fail("otherCpes needs a cpe")
+		}
+		for _, other := range product.OtherPackages {
+			if !packagePattern.MatchString(other) {
+				return nil, fail("otherPackages entry %q is not valid; expected something like %q", other, "github.com/traefik/traefik/v3")
+			}
+		}
+		if len(product.OtherPackages) > 0 && product.Package == "" {
+			return nil, fail("otherPackages needs a package")
 		}
 		for _, check := range checks {
 			if check.value != "" && !check.pattern.MatchString(check.value) {

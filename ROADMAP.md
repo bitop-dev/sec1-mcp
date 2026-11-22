@@ -24,23 +24,31 @@ Done, and released as 0.1.0:
 - [x] Release 0.1.0, so there are versioned container images and a stable
   install target.
 
+Follow-ups, also done:
+
+- [x] Several NVD product names for one product, as nginx needs.
+- [x] The latest release of PostgreSQL and nginx, from lifecycle data.
+
 Still open here:
 
-- Several NVD product names for one product, as nginx needs.
-- A source for the latest release of PostgreSQL, nginx and ingress-nginx.
+- A source for the latest release of ingress-nginx.
 
 ## 2. More signal in each answer
 
-- **End-of-life status.** A version that is out of support gets no fixes,
+- [x] End-of-life status. A version that is out of support gets no fixes,
   and no advisory says so.
-- **Public exploit availability**, and a wider exploited-in-the-wild list
-  than CISA's alone.
+- [x] Public exploit availability, from the nuclei-templates and Metasploit
+  indexes.
+- [x] Go-based products looked up as Go modules, for exact fixed versions
+  where NVD has no version data.
+- **A wider exploited-in-the-wild list** than CISA's alone.
 - **Vendor security feeds**, for products whose vendor announces fixes
   before the databases catch up.
-- **Workarounds** from the advisory, as their own field, for when upgrading
+- [x] Workarounds from the advisory, as their own field, for when upgrading
   has to wait.
-- **Recent advisories for a product since a given date**, so an agent can
-  ask what is new without the server keeping any state.
+- [x] Advisories for a product since a given date, so an agent can ask what
+  is new without the server keeping any state.
+- **Lifecycle data for the AI products** in the catalog, which have none.
 
 ## 3. Bigger inputs
 

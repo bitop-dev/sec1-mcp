@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -65,16 +66,74 @@ func (v osvVuln) fixedFor(packageName string) []string {
 		}
 		for _, r := range affected.Ranges {
 			for _, event := range r.Events {
-				fixed = appendUnique(fixed, event.Fixed)
+				// A Go pseudo-version names a commit, not a release anyone
+				// can upgrade to.
+				if !goPseudoVersion.MatchString(event.Fixed) {
+					fixed = appendUnique(fixed, event.Fixed)
+				}
 			}
 		}
 	}
 	return fixed
 }
 
+var goPseudoVersion = regexp.MustCompile(`\d{14}-[0-9a-f]{12}$`)
+
+var goMajorSuffix = regexp.MustCompile(`/v(\d+)$`)
+
+// packages returns the package names to ask OSV about for this version.
+//
+// A Go module changes its path with each major version from 2 onward
+// (".../v2", ".../v3"), and a product may be published under several. Asking
+// about a module of a different major version returns advisories that were
+// never fixed in that abandoned module, which do not apply. So for Go, with a
+// version given, only the module for that major version is asked: the path
+// ending in /vN when there is one, otherwise the paths with no suffix.
+func (component Component) packages() []string {
+	all := appendUnique([]string{component.packageName()}, component.OtherPackages...)
+	major := ""
+	if match := regexp.MustCompile(`^[vV]?(\d+)`).FindStringSubmatch(component.Version); match != nil {
+		major = match[1]
+	}
+	if !strings.EqualFold(component.Ecosystem, "Go") || major == "" {
+		return all
+	}
+	var forMajor, unsuffixed []string
+	for _, name := range all {
+		switch suffix := goMajorSuffix.FindStringSubmatch(name); {
+		case suffix == nil:
+			unsuffixed = append(unsuffixed, name)
+		case suffix[1] == major:
+			forMajor = append(forMajor, name)
+		}
+	}
+	if len(forMajor) > 0 {
+		return forMajor
+	}
+	return unsuffixed
+}
+
 func (c *Client) osvAdvisories(ctx context.Context, component Component) ([]Advisory, error) {
+	var advisories []Advisory
+	seen := map[string]bool{}
+	for _, packageName := range component.packages() {
+		found, err := c.osvPackage(ctx, component, packageName)
+		if err != nil {
+			return nil, err
+		}
+		for _, advisory := range found {
+			if !seen[advisory.ID] {
+				seen[advisory.ID] = true
+				advisories = append(advisories, advisory)
+			}
+		}
+	}
+	return advisories, nil
+}
+
+func (c *Client) osvPackage(ctx context.Context, component Component, packageName string) ([]Advisory, error) {
 	query := map[string]any{
-		"package": map[string]string{"name": component.packageName(), "ecosystem": component.Ecosystem},
+		"package": map[string]string{"name": packageName, "ecosystem": component.Ecosystem},
 	}
 	if component.Version != "" {
 		query["version"] = component.Version
@@ -90,14 +149,15 @@ func (c *Client) osvAdvisories(ctx context.Context, component Component) ([]Advi
 		}
 		for _, vuln := range response.Vulns {
 			advisory := Advisory{
-				ID:        vuln.ID,
-				Aliases:   vuln.Aliases,
-				Title:     vuln.title(),
-				Severity:  normalizeSeverity(vuln.DatabaseSpecific.Severity),
-				FixedIn:   vuln.fixedFor(component.packageName()),
-				Published: vuln.Published,
-				URL:       "https://osv.dev/vulnerability/" + url.PathEscape(vuln.ID),
-				Sources:   []string{"osv"},
+				ID:         vuln.ID,
+				Aliases:    vuln.Aliases,
+				Title:      vuln.title(),
+				Severity:   normalizeSeverity(vuln.DatabaseSpecific.Severity),
+				FixedIn:    vuln.fixedFor(packageName),
+				Published:  vuln.Published,
+				URL:        "https://osv.dev/vulnerability/" + url.PathEscape(vuln.ID),
+				Sources:    []string{"osv"},
+				Workaround: workaround(vuln.Details),
 			}
 			// OSV's MAL- records mark releases that contained malware. That is
 			// worse than any vulnerability and carries no severity of its own.
@@ -144,6 +204,7 @@ type githubAdvisory struct {
 	GHSAID          string  `json:"ghsa_id"`
 	CVEID           *string `json:"cve_id"`
 	Summary         string  `json:"summary"`
+	Description     *string `json:"description"`
 	Severity        *string `json:"severity"`
 	HTMLURL         string  `json:"html_url"`
 	PublishedAt     *string `json:"published_at"`
@@ -246,6 +307,9 @@ func githubApplies(running string, item githubAdvisory) (Advisory, int) {
 	}
 	if item.PublishedAt != nil {
 		advisory.Published = *item.PublishedAt
+	}
+	if item.Description != nil {
+		advisory.Workaround = workaround(*item.Description)
 	}
 
 	var fixes []string
@@ -448,41 +512,84 @@ func (c *Client) nvdQuery(ctx context.Context, parameters url.Values) ([]nvdCVE,
 	}
 }
 
+// cpeSafeVersion matches versions that can be written into a CPE name as
+// they are.
+var cpeSafeVersion = regexp.MustCompile(`^[vV]?[A-Za-z0-9._-]+$`)
+
+// vulnerableIn reports whether the CVE marks the product itself as
+// vulnerable. NVD also lists a product as the platform some other vulnerable
+// software runs on; those CVEs are not about the product. A CVE with no
+// applicability data for the product is kept.
+func (cve nvdCVE) vulnerableIn(prefix string) bool {
+	listed := false
+	for _, configuration := range cve.Configurations {
+		for _, node := range configuration.Nodes {
+			for _, match := range node.CPEMatch {
+				if !strings.HasPrefix(match.Criteria, prefix) {
+					continue
+				}
+				if match.Vulnerable {
+					return true
+				}
+				listed = true
+			}
+		}
+	}
+	return !listed
+}
+
+// cpes returns every NVD name the component is filed under.
+func (component Component) cpes() []string {
+	return appendUnique([]string{component.CPE}, component.OtherCPEs...)
+}
+
 func (c *Client) nvdAdvisories(ctx context.Context, component Component) ([]Advisory, error) {
-	base := cpeBase(component.CPE)
-	parameters := url.Values{}
-	if component.Version != "" {
-		parameters.Set("virtualMatchString", base+":"+component.Version)
-	} else {
-		// A product's full history can run to thousands of CVEs.
-		now := time.Now().UTC()
-		parameters.Set("virtualMatchString", base)
-		parameters.Set("pubStartDate", now.Add(-recentWindow).Format("2006-01-02T15:04:05.000Z"))
-		parameters.Set("pubEndDate", now.Format("2006-01-02T15:04:05.000Z"))
-	}
-	cves, err := c.nvdQuery(ctx, parameters)
-	if err != nil {
-		return nil, err
-	}
-	advisories := make([]Advisory, 0, len(cves))
-	for _, cve := range cves {
-		severity, _, _ := cve.severity()
-		advisory := Advisory{
-			ID:        cve.ID,
-			Title:     clean(cve.description(), titleLimit),
-			Severity:  severity,
-			FixedIn:   nvdFixed(component.Version, cve, base+":"),
-			Published: cve.Published,
-			URL:       "https://nvd.nist.gov/vuln/detail/" + url.PathEscape(cve.ID),
-			Sources:   []string{"nvd"},
+	var advisories []Advisory
+	seen := map[string]bool{}
+	for _, cpe := range component.cpes() {
+		base := cpeBase(cpe)
+		parameters := url.Values{}
+		switch {
+		case component.Version == "":
+			// A product's full history can run to thousands of CVEs.
+			now := time.Now().UTC()
+			parameters.Set("virtualMatchString", base)
+			parameters.Set("pubStartDate", now.Add(-recentWindow).Format("2006-01-02T15:04:05.000Z"))
+			parameters.Set("pubEndDate", now.Format("2006-01-02T15:04:05.000Z"))
+		case cpeSafeVersion.MatchString(component.Version):
+			// cpeName finds everything virtualMatchString does, and also CVEs
+			// recorded against every version of a product with no range.
+			parameters.Set("cpeName", base+":"+strings.TrimLeft(component.Version, "vV")+":*:*:*:*:*:*:*")
+		default:
+			parameters.Set("virtualMatchString", base+":"+component.Version)
 		}
-		if advisory.Title == "" {
-			advisory.Title = cve.ID
+		cves, err := c.nvdQuery(ctx, parameters)
+		if err != nil {
+			return nil, err
 		}
-		if component.Version == "" {
-			advisory.Note = "No version given; only CVEs from the last 120 days are listed. " + noVersionNote
+		for _, cve := range cves {
+			if seen[cve.ID] || !cve.vulnerableIn(base+":") {
+				continue
+			}
+			seen[cve.ID] = true
+			severity, _, _ := cve.severity()
+			advisory := Advisory{
+				ID:        cve.ID,
+				Title:     clean(cve.description(), titleLimit),
+				Severity:  severity,
+				FixedIn:   nvdFixed(component.Version, cve, base+":"),
+				Published: cve.Published,
+				URL:       "https://nvd.nist.gov/vuln/detail/" + url.PathEscape(cve.ID),
+				Sources:   []string{"nvd"},
+			}
+			if advisory.Title == "" {
+				advisory.Title = cve.ID
+			}
+			if component.Version == "" {
+				advisory.Note = "No version given; only CVEs from the last 120 days are listed. " + noVersionNote
+			}
+			advisories = append(advisories, advisory)
 		}
-		advisories = append(advisories, advisory)
 	}
 	return advisories, nil
 }
@@ -491,13 +598,15 @@ func (c *Client) nvdAdvisories(ctx context.Context, component Component) ([]Advi
 // version ranges for this product. A CVE in this set that NVD did not return
 // for the running version is known not to affect it.
 func (c *Client) nvdExploitedWithVersionData(ctx context.Context, component Component) (map[string]bool, error) {
-	cves, err := c.nvdQuery(ctx, url.Values{"virtualMatchString": {cpeBase(component.CPE)}, "hasKev": {""}})
-	if err != nil {
-		return nil, err
-	}
 	known := map[string]bool{}
-	for _, cve := range cves {
-		known[cve.ID] = true
+	for _, cpe := range component.cpes() {
+		cves, err := c.nvdQuery(ctx, url.Values{"virtualMatchString": {cpeBase(cpe)}, "hasKev": {""}})
+		if err != nil {
+			return nil, err
+		}
+		for _, cve := range cves {
+			known[cve.ID] = true
+		}
 	}
 	return known, nil
 }

@@ -3,9 +3,14 @@
 # Each entry maps a product to the identifiers the advisory sources need:
 #
 #   ecosystem + package   registry package, for OSV (exact version matching)
+#   otherPackages         further package names for the product, such as a Go
+#                         module's /v2 and /v3 paths
 #   repo                  upstream GitHub repository, for its security advisories
 #   cpe                   NVD's vendor:product name
 #   gitlabRepo            gitlab.com project, used only to find the latest release
+#   otherCpes             further names NVD files the same product under
+#   lifecycle             the product's name in endoflife.date's data, for
+#                         end-of-life status and the latest release
 #   aliases               other names people and vulnerability lists use
 #   images                container image repositories, without registry host or tag
 #
@@ -40,6 +45,7 @@ products:
     aliases: [gitlab-ee, gitlab-ce]
     cpe: gitlab:gitlab
     gitlabRepo: gitlab-org/gitlab
+    lifecycle: gitlab
     images:
       - gitlab/gitlab-ee
       - gitlab/gitlab-ce
@@ -63,12 +69,17 @@ products:
   # ---- Infrastructure
   #
   # Each identifier below was checked when it was added: the repository and
-  # its advisories on GitHub, the product name against NVD, and the image
-  # name against its registry.
+  # its advisories on GitHub, the product name against NVD, the package name
+  # against OSV, and the image name against its registry.
+  #
+  # Products written in Go are also looked up as Go modules, which OSV tracks
+  # with exact fixed versions. That matters most where NVD has not yet filed
+  # version data for a CVE.
 
   - name: PostgreSQL
     aliases: [postgres]
     cpe: postgresql:postgresql
+    lifecycle: postgresql
     images:
       - postgres
       - cloudnative-pg/postgresql
@@ -76,19 +87,22 @@ products:
   - name: Redis
     repo: redis/redis
     cpe: redis:redis
+    lifecycle: redis
     images:
       - redis
 
   - name: Valkey
     repo: valkey-io/valkey
     cpe: lfprojects:valkey
+    lifecycle: valkey
     images:
       - valkey/valkey
 
-  # NVD files nginx under two product names. This is the one it uses for
-  # current CVEs; older ones are under f5:nginx_open_source.
+  # NVD files nginx under two product names, so both are searched.
   - name: nginx
     cpe: f5:nginx
+    otherCpes: [f5:nginx_open_source]
+    lifecycle: nginx
     images:
       - nginx
       - nginxinc/nginx-unprivileged
@@ -101,8 +115,11 @@ products:
 
   - name: Kubernetes
     aliases: [k8s, kube-apiserver, kubelet]
+    ecosystem: Go
+    package: k8s.io/kubernetes
     repo: kubernetes/kubernetes
     cpe: kubernetes:kubernetes
+    lifecycle: kubernetes
     images:
       - kube-apiserver
       - kube-controller-manager
@@ -110,14 +127,23 @@ products:
       - kube-proxy
 
   - name: Traefik
+    ecosystem: Go
+    package: github.com/traefik/traefik
+    otherPackages:
+      - github.com/traefik/traefik/v2
+      - github.com/traefik/traefik/v3
     repo: traefik/traefik
     cpe: traefik:traefik
+    lifecycle: traefik
     images:
       - traefik
 
   - name: cert-manager
+    ecosystem: Go
+    package: github.com/cert-manager/cert-manager
     repo: cert-manager/cert-manager
     cpe: cert-manager:cert-manager
+    lifecycle: cert-manager
     images:
       - jetstack/cert-manager-controller
       - jetstack/cert-manager-webhook
@@ -125,22 +151,34 @@ products:
 
   - name: Argo CD
     aliases: [argocd]
+    ecosystem: Go
+    package: github.com/argoproj/argo-cd
+    otherPackages:
+      - github.com/argoproj/argo-cd/v2
+      - github.com/argoproj/argo-cd/v3
     repo: argoproj/argo-cd
     cpe: argoproj:argo_cd
+    lifecycle: argo-cd
     images:
       - argoproj/argocd
 
   - name: Harbor
+    ecosystem: Go
+    package: github.com/goharbor/harbor
     repo: goharbor/harbor
     cpe: linuxfoundation:harbor
+    lifecycle: harbor
     images:
       - goharbor/harbor-core
 
   # ---- Observability and search
 
   - name: Grafana
+    ecosystem: Go
+    package: github.com/grafana/grafana
     repo: grafana/grafana
     cpe: grafana:grafana
+    lifecycle: grafana
     images:
       - grafana/grafana
       - grafana/grafana-oss
@@ -149,6 +187,7 @@ products:
   - name: Prometheus
     repo: prometheus/prometheus
     cpe: prometheus:prometheus
+    lifecycle: prometheus
     images:
       - prom/prometheus
       - prometheus/prometheus
@@ -156,6 +195,7 @@ products:
   - name: Elasticsearch
     repo: elastic/elasticsearch
     cpe: elastic:elasticsearch
+    lifecycle: elasticsearch
     images:
       - elasticsearch
       - elasticsearch/elasticsearch
@@ -165,19 +205,25 @@ products:
   - name: Keycloak
     repo: keycloak/keycloak
     cpe: redhat:keycloak
+    lifecycle: keycloak
     images:
       - keycloak/keycloak
 
   - name: Vault
     aliases: [hashicorp-vault]
+    ecosystem: Go
+    package: github.com/hashicorp/vault
     repo: hashicorp/vault
     cpe: hashicorp:vault
+    lifecycle: hashicorp-vault
     images:
       - hashicorp/vault
 
   # ---- AI serving
 
   - name: Ollama
+    ecosystem: Go
+    package: github.com/ollama/ollama
     repo: ollama/ollama
     cpe: ollama:ollama
     images:

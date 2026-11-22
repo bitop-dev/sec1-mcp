@@ -6,6 +6,35 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `support` on every answer: whether the version's release line still
+  receives fixes, when it ends or ended, and the newest release on that
+  line. An ended line is also stated in `reason`.
+- `publicExploits` on advisories, from the nuclei-templates and Metasploit
+  indexes. A public scanner template or exploit module raises a normal
+  advisory to high.
+- `workaround` on advisories, taken from the advisory's own workaround
+  section.
+- A `since` date on `check_component` and `check_components`, to list only
+  what is new. `status` still describes everything that applies.
+- Go-based catalog products (Kubernetes, Grafana, Traefik, Argo CD, Harbor,
+  cert-manager, Vault and Ollama) are now also looked up as Go modules in
+  OSV.
+- Catalog fields `lifecycle`, `otherCpes` and `otherPackages`.
+- The latest release for PostgreSQL and nginx, from lifecycle data.
+
+### Fixed
+
+- NVD lookups missed CVEs recorded against every version of a product with
+  no version range. Kubernetes 1.28.4 was reported as having no known
+  advisories; it now reports ten.
+- NVD lookups listed CVEs where the product is only the platform some other
+  vulnerable software runs on.
+- nginx is searched under both names NVD files it under.
+- Go pseudo-versions, which name a commit and not a release, are no longer
+  offered as fixed versions.
+
 ## [0.1.0] - 2026-11-21
 
 The first release.

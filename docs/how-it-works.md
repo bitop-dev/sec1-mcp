@@ -22,8 +22,11 @@ input ──▶ resolve ──▶ OSV ─────┐
    Exploited Vulnerabilities catalog are flagged, with the date they were
    listed.
 5. **Score.** CVE identifiers are sent to EPSS for the probability of
-   exploitation in the next 30 days.
-6. **Set priorities and the status.**
+   exploitation in the next 30 days, and looked up in two public indexes of
+   scanner templates and exploit modules.
+6. **Check the release line** against lifecycle data, to see whether it
+   still receives fixes.
+7. **Set priorities and the status.**
 
 ## Sources
 
@@ -34,6 +37,18 @@ input ──▶ resolve ──▶ OSV ─────┐
 | NVD | `cpe` | Version, through NVD's product data | CVEs for products that are not registry packages |
 | CISA KEV | Name and aliases | Product name | Which CVEs are being exploited |
 | EPSS | CVE ids | CVE id | Likelihood of exploitation |
+| nuclei-templates, Metasploit | CVE ids | CVE id | Whether a public scanner template or exploit module exists |
+| endoflife.date | `lifecycle` | Release line | Whether the line still gets fixes, and the latest release |
+
+Products written in Go are looked up in OSV as Go modules. That gives exact
+fixed versions, and it matters most where NVD has not yet filed version data
+for a CVE: for Kubernetes, OSV returns advisories that NVD cannot match to a
+version at all. A Go module's path changes with its major version, so only
+the module for the running version's major is asked.
+
+endoflife.date is a community-maintained dataset. The exploit indexes are
+the lists the nuclei-templates and Metasploit projects publish; presence in
+one means that finding or exploiting the flaw takes no skill.
 
 Without a version, OSV and GitHub return a product's whole history, and NVD
 returns only the last 120 days, since a product's full history there can run
@@ -122,7 +137,7 @@ priority can be traced to one fact, which the advisory's `rationale` states.
 | Priority | Rule |
 | --- | --- |
 | `urgent` | Listed as exploited in the wild, or critical severity. |
-| `high` | High severity, or any lower severity with an EPSS score of 10% or more. |
+| `high` | High severity; or any lower severity with an EPSS score of 10% or more, or with a public scanner template or exploit module. |
 | `normal` | Everything else, including advisories with no published severity. |
 
 A malicious-release report from OSV is treated as critical.
@@ -138,6 +153,11 @@ still benefits from earlier lookups.
 | GitHub, latest-release lookups | 30 minutes |
 | NVD, CISA KEV | 1 hour |
 | EPSS | 6 hours |
+| Lifecycle data | 12 hours |
+| Exploit indexes | 24 hours |
+
+The exploit indexes are several megabytes each, so only the CVE ids in them
+are kept.
 
 NVD allows one request every six seconds without an API key, so requests to
 it are queued at that pace. GitHub allows 60 requests an hour without a

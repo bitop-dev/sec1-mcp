@@ -7,7 +7,8 @@ Invalid input and failed lookups come back as a tool result with `isError`
 set and a message saying what to change. A request for a tool that does not
 exist is a protocol error.
 
-The example answers below are real output, shortened where marked.
+The example answers below are real output, shortened: the full answers also
+carry the fields described in the tables.
 
 ## Identifying a component
 
@@ -29,7 +30,12 @@ Explicit identifiers add to, and override, what the catalog knows.
 
 Reports the advisories that apply to one component at one version.
 
-Extra input: `limit`, the most advisories to return (default 20, at most 100).
+Extra inputs:
+
+| Field | Meaning |
+| --- | --- |
+| `limit` | The most advisories to return. Default 20, at most 100. |
+| `since` | A date as `YYYY-MM-DD`. Lists only advisories published, or listed as exploited, on or after it. Use it to ask what is new. |
 
 ```json
 {"image": "ghcr.io/berriai/litellm:main-v1.106.6-stable", "limit": 1}
@@ -49,9 +55,10 @@ Extra input: `limit`, the most advisories to return (default 20, at most 100).
   },
   "status": "affected",
   "reason": "2 advisories apply to version 1.106.6.",
-  "counts": {"urgent": 0, "high": 1, "normal": 1, "exploited": 0},
+  "counts": {"urgent": 0, "high": 1, "normal": 1, "exploited": 0, "publicExploit": 0},
   "latestVersion": "1.110.2",
   "versionStatus": "behind",
+  "support": {"status": "unknown", "detail": "no lifecycle data is known for this product"},
   "coverage": [
     {"source": "osv", "status": "checked", "detail": "0 advisories"},
     {"source": "github", "status": "checked", "detail": "2 advisories"},
@@ -89,6 +96,8 @@ Extra input: `limit`, the most advisories to return (default 20, at most 100).
 | `reason` | One sentence explaining the status. |
 | `counts` | Advisories by priority, and how many are exploited in the wild. |
 | `latestVersion`, `versionStatus` | The newest final release, and `current`, `behind`, `unknown` or `not-set`. |
+| `support` | Whether the version's release line still receives fixes. See [support](#support). |
+| `since`, `olderAdvisories` | The `since` date applied, and how many advisories that apply were left out because they predate it. |
 | `coverage` | What each source did: `checked`, `skipped` or `failed`, with detail. |
 | `advisories` | Most urgent first, up to `limit`. |
 | `totalAdvisories`, `truncated` | How many there are in all, and whether the list was cut. |
@@ -103,10 +112,41 @@ Extra input: `limit`, the most advisories to return (default 20, at most 100).
 | `priority`, `rationale` | `urgent`, `high` or `normal`, and the rule that set it. |
 | `exploited`, `exploitedSince` | Listed in CISA's Known Exploited Vulnerabilities catalog, and when. |
 | `epss` | Estimated probability, from 0 to 1, of exploitation in the next 30 days. |
+| `publicExploits` | Public tools that already target it: `nuclei-template` (a scanner can find it) and `metasploit-module` (an exploit is packaged). |
+| `workaround` | The advisory's own workaround section, when it has one. Third-party text. Untrusted. |
 | `fixedIn` | Versions containing the fix, often one per release line. |
 | `sources` | Which sources reported it. |
 | `nameOnly` | True when matched by product name alone, with no version check. |
 | `note` | Anything the reader needs to know about how the match was made. |
+
+### Support
+
+`support` says whether the version's release line still gets fixes. A
+version that is out of support has no advisory telling you so: flaws found
+in it are simply never fixed.
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `supported`, `end_of_life` or `unknown`. |
+| `releaseLine` | The line the version belongs to, such as `16` or `1.31`. |
+| `endOfLife` | The date the line stops, or stopped, receiving fixes. |
+| `latestInLine` | The newest release on the same line. |
+| `detail` | Why the status is `unknown`, when it is. |
+
+When the line has ended, the answer's `reason` says so as well. `unknown`
+means no lifecycle data is known for the product, or the version's line is
+not in it; it does not mean supported.
+
+### Asking what is new
+
+With `since`, `advisories` and `counts` cover only what is new, and
+`olderAdvisories` counts the rest. **`status` does not change**: it still
+describes everything that applies. An answer with nothing new and
+`status: affected` means the older advisories are still open.
+
+An advisory counts as new by its publication date, or by the date it was
+listed as exploited if that is later, so an old flaw that has just started
+being exploited shows up.
 
 ### Status values
 
@@ -122,6 +162,9 @@ Extra input: `limit`, the most advisories to return (default 20, at most 100).
 
 Checks up to 25 components in one call and returns a summary of each. Use
 `check_component` afterwards for the full advisories of any one of them.
+
+It takes an optional `since` date, with the same meaning as in
+`check_component`. Each summary carries `support` and `olderAdvisories`.
 
 ```json
 {
@@ -238,6 +281,8 @@ Input: `id`, such as `CVE-2026-42208` or `GHSA-r75f-5x8p-qvmc`.
 | `severity`, `cvssVector`, `cvssScore` | Severity, with the CVSS vector and score when NVD has them. |
 | `exploited`, `exploitedSince`, `ransomwareUse` | CISA's listing, its date, and its note on use in ransomware. |
 | `epss` | Estimated probability of exploitation in the next 30 days. |
+| `publicExploits` | Public tools that already target it: `nuclei-template` and `metasploit-module`. |
+| `workaround` | The advisory's own workaround section, when it has one. Untrusted. |
 | `affected` | Up to 20 affected packages, each with its ecosystem and fixed versions. |
 | `references` | Up to 10 reference URLs from the advisory. Untrusted. |
 | `published`, `modified` | Dates. |

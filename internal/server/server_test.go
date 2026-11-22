@@ -42,6 +42,7 @@ func offline() *intel.Client {
 	client.Endpoints = intel.Endpoints{
 		OSV: "http://127.0.0.1:1", GitHub: "http://127.0.0.1:1", NVD: "http://127.0.0.1:1", NVDProducts: "http://127.0.0.1:1", KEV: "http://127.0.0.1:1",
 		EPSS: "http://127.0.0.1:1", PyPI: "http://127.0.0.1:1", NPM: "http://127.0.0.1:1", GitLab: "http://127.0.0.1:1",
+		Lifecycle: "http://127.0.0.1:1", Nuclei: "http://127.0.0.1:1", Metasploit: "http://127.0.0.1:1",
 	}
 	client.RetryDelays = nil
 	client.NVDPause = 0
@@ -155,6 +156,46 @@ func TestUnreachableSourcesGiveUnknownNotClean(t *testing.T) {
 	}
 }
 
+func TestSinceKeepsTheStatusAndCountsWhatItHides(t *testing.T) {
+	result := intel.Result{
+		Status: intel.StatusAffected,
+		Reason: "3 advisories apply to version 1.0.0.",
+		Advisories: []intel.Advisory{
+			{ID: "new", Priority: "high", Published: "2026-11-12T09:50:25Z"},
+			{ID: "old", Priority: "urgent", Published: "2026-05-01T00:00:00Z"},
+			{ID: "old-but-newly-exploited", Priority: "urgent", Published: "2024-01-01", Exploited: true, ExploitedSince: "2026-11-17"},
+		},
+	}
+	older := onlySince(&result, "2026-11-01")
+	if older != 1 || len(result.Advisories) != 2 {
+		t.Fatalf("older = %d, kept = %d; want 1 and 2", older, len(result.Advisories))
+	}
+	if result.Status != intel.StatusAffected {
+		t.Errorf("status changed to %q; it must still describe everything that applies", result.Status)
+	}
+	if result.Counts.Urgent != 1 || result.Counts.High != 1 || result.Counts.Exploited != 1 {
+		t.Errorf("counts = %+v; they should cover only what is listed", result.Counts)
+	}
+	if !strings.Contains(result.Reason, "Since 2026-11-01: 2 new, 1 older not listed.") {
+		t.Errorf("reason = %q", result.Reason)
+	}
+
+	// Nothing new must not read as nothing wrong.
+	quiet := intel.Result{Status: intel.StatusAffected, Reason: "1 advisories apply.", Advisories: []intel.Advisory{{ID: "old", Priority: "urgent", Published: "2026-05-01"}}}
+	if older := onlySince(&quiet, "2026-11-01"); older != 1 || quiet.Status != intel.StatusAffected {
+		t.Errorf("older = %d, status = %q", older, quiet.Status)
+	}
+}
+
+func TestSinceMustBeADate(t *testing.T) {
+	session := connect(t, offline())
+	for _, since := range []string{"last week", "2026-13-01", "11/01/2026"} {
+		if result, _ := call(t, session, "check_component", map[string]any{"name": "LiteLLM", "since": since}); !result.IsError {
+			t.Errorf("since %q should be rejected", since)
+		}
+	}
+}
+
 // TestLive runs against the real services. It is skipped unless SEC1_LIVE is
 // set, so the normal test run needs no network.
 func TestLive(t *testing.T) {
@@ -186,5 +227,9 @@ func TestLive(t *testing.T) {
 	show("check_component", map[string]any{"name": "requests", "ecosystem": "PyPI", "package": "requests", "version": "2.25.0", "limit": 3})
 	show("check_component", map[string]any{"name": "Grafana-by-repo", "repo": "grafana/grafana", "version": "10.0.0", "limit": 20})
 	show("find_identifiers", map[string]any{"name": "redis"})
+	show("check_component", map[string]any{"image": "postgres:12.5", "limit": 2})
+	show("check_component", map[string]any{"image": "grafana/grafana:8.2.0", "limit": 4})
+	show("check_component", map[string]any{"name": "LiteLLM", "version": "1.106.6", "since": "2026-11-13"})
+	show("get_advisory", map[string]any{"id": "CVE-2021-43798"})
 	show("get_advisory", map[string]any{"id": "CVE-2026-42208"})
 }

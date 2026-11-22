@@ -25,6 +25,9 @@ import (
 // address.
 type Endpoints struct {
 	OSV, GitHub, NVD, NVDProducts, KEV, EPSS, PyPI, NPM, GitLab string
+	// Lifecycle is endoflife.date's product API. Nuclei and Metasploit are
+	// the published indexes of scanner templates and exploit modules.
+	Lifecycle, Nuclei, Metasploit string
 }
 
 // DefaultEndpoints returns the real services.
@@ -39,6 +42,9 @@ func DefaultEndpoints() Endpoints {
 		PyPI:        "https://pypi.org",
 		NPM:         "https://registry.npmjs.org",
 		GitLab:      "https://gitlab.com",
+		Lifecycle:   "https://endoflife.date/api/v1/products",
+		Nuclei:      "https://raw.githubusercontent.com/projectdiscovery/nuclei-templates/main/cves.json",
+		Metasploit:  "https://raw.githubusercontent.com/rapid7/metasploit-framework/master/db/modules_metadata_base.json",
 	}
 }
 
@@ -46,12 +52,14 @@ func DefaultEndpoints() Endpoints {
 // next to how often an agent repeats a question, and NVD and GitHub both
 // rate-limit unauthenticated callers.
 const (
-	ttlOSV    = 15 * time.Minute
-	ttlGitHub = 30 * time.Minute
-	ttlNVD    = time.Hour
-	ttlKEV    = time.Hour
-	ttlEPSS   = 6 * time.Hour
-	ttlLatest = 30 * time.Minute
+	ttlOSV       = 15 * time.Minute
+	ttlGitHub    = 30 * time.Minute
+	ttlNVD       = time.Hour
+	ttlKEV       = time.Hour
+	ttlEPSS      = 6 * time.Hour
+	ttlLatest    = 30 * time.Minute
+	ttlLifecycle = 12 * time.Hour
+	ttlExploits  = 24 * time.Hour
 )
 
 const maxResponseBytes = 32 << 20
@@ -76,6 +84,11 @@ type Client struct {
 	kevMu    sync.Mutex
 	kevAt    time.Time
 	kevIndex *kevIndex
+
+	exploitMu     sync.Mutex
+	exploitAt     time.Time
+	exploitIndex  *exploitIndex
+	exploitFailed []string
 }
 
 // NewClient returns a client for the real services. Credentials are read
@@ -140,33 +153,44 @@ func (c *Client) fetch(ctx context.Context, r request, out any) (next string, er
 		return entry.Next, json.Unmarshal(entry.Body, out)
 	}
 
-	var response []byte
-	for attempt := 0; ; attempt++ {
-		if r.paced {
-			if err := c.waitForNVD(ctx); err != nil {
-				return "", err
-			}
-		}
-		response, next, err = c.once(ctx, r, body)
-		if err == nil {
-			break
-		}
-		status, isStatus := err.(*statusError)
-		transient := !isStatus || status.Code == http.StatusTooManyRequests || status.Code >= 500
-		if !transient || attempt >= len(c.RetryDelays) || ctx.Err() != nil {
-			return "", err
-		}
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(c.RetryDelays[attempt]):
-		}
+	response, next, err := c.raw(ctx, r, body)
+	if err != nil {
+		return "", err
 	}
 	if err := json.Unmarshal(response, out); err != nil {
 		return "", fmt.Errorf("%s: unreadable response: %w", r.url, err)
 	}
 	c.Cache.put(key, cacheEntry{At: time.Now(), Next: next, Body: response})
 	return next, nil
+}
+
+// raw performs the request with retries and returns the response body
+// uncached. Callers that want caching use fetch.
+func (c *Client) raw(ctx context.Context, r request, body []byte) (response []byte, next string, err error) {
+	if r.method == "" {
+		r.method = http.MethodGet
+	}
+	for attempt := 0; ; attempt++ {
+		if r.paced {
+			if err := c.waitForNVD(ctx); err != nil {
+				return nil, "", err
+			}
+		}
+		response, next, err = c.once(ctx, r, body)
+		if err == nil {
+			return response, next, nil
+		}
+		status, isStatus := err.(*statusError)
+		transient := !isStatus || status.Code == http.StatusTooManyRequests || status.Code >= 500
+		if !transient || attempt >= len(c.RetryDelays) || ctx.Err() != nil {
+			return nil, "", err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-time.After(c.RetryDelays[attempt]):
+		}
+	}
 }
 
 func (c *Client) once(ctx context.Context, r request, body []byte) ([]byte, string, error) {

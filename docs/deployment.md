@@ -184,9 +184,10 @@ Things to decide for your cluster:
 - **Your own catalog.** Mount it from a ConfigMap and point `SEC1_CATALOG`
   at the file.
 - **Outbound access.** The pod needs HTTPS to `api.osv.dev`,
-  `api.github.com`, `services.nvd.nist.gov`, `www.cisa.gov`, `api.first.org`,
-  `pypi.org`, `registry.npmjs.org` and `gitlab.com`. If you restrict egress,
-  allow those.
+  `api.github.com`, `raw.githubusercontent.com`, `services.nvd.nist.gov`,
+  `www.cisa.gov`, `api.first.org`, `endoflife.date`, `pypi.org`,
+  `registry.npmjs.org` and `gitlab.com`. If you restrict egress, allow
+  those. A host that is blocked shows up as a failed source in `coverage`.
 - **Who can reach it.** Keep the Service cluster-internal, and use a
   NetworkPolicy to limit which pods may call it. Expose it outside the
   cluster only through an ingress with TLS.
