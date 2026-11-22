@@ -66,8 +66,9 @@ Follow-ups, also done:
   look into a CVE.
 - [x] A resource for the catalog.
 - **Resources for single advisories.**
-- **OAuth authorization**, as the specification describes it, alongside the
-  shared token.
+- **OAuth authorization**, as the specification describes it. Not planned
+  until a deployment needs per-person identity: the server runs without
+  authentication on an internal network, or with a token per team.
 - [x] An audit log and a metrics endpoint for the HTTP transport.
 - [x] A token per team, and a request limit per team, for a shared service.
 - **A listing in the MCP registry.**

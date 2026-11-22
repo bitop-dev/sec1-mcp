@@ -10,15 +10,49 @@ with everything on this page switched on.
 
 ## The short version
 
-| Concern | Setting |
-| --- | --- |
-| Who is calling | A token per team, in a file: `SEC1_HTTP_TOKEN_FILE` |
-| Fair use | A per-team request limit: `SEC1_HTTP_RATE` |
-| What happened | A JSON audit log: `-log-format json` |
-| Is it healthy | Metrics on their own port: `SEC1_METRICS_ADDR` |
-| Shared upstream limits | Optional keys: `GITHUB_TOKEN`, `NVD_API_KEY` |
+| Concern | Setting | Needed? |
+| --- | --- | --- |
+| Is it healthy | Metrics on their own port: `SEC1_METRICS_ADDR` | Recommended |
+| What happened | A JSON log of tool calls: `-log-format json` | Recommended |
+| Who is calling | A token per team, in a file: `SEC1_HTTP_TOKEN_FILE` | Optional |
+| Fair use | A per-team request limit: `SEC1_HTTP_RATE` | Optional, with tokens |
+| Shared upstream limits | Keys: `GITHUB_TOKEN`, `NVD_API_KEY` | Optional |
+
+## Running without authentication
+
+Authentication is optional. With no token configured, the server accepts
+every request, and that is a reasonable way to run it on a network that only
+your own staff can reach. The example manifest runs this way.
+
+It is reasonable because of what the server is: every tool is read-only, the
+answers are public advisory data, and the server stores nothing about its
+callers. Someone who should not have access could use it to look things up,
+and could use up the shared upstream allowance, but there is nothing in it
+to steal or change.
+
+What you take on by leaving tokens off:
+
+- **The network is the only control.** The server does not know who is IT
+  staff. Keep it off any public address: a cluster-internal Service, an
+  internal-only ingress, and a NetworkPolicy or firewall rule that admits
+  only the networks your staff use. The same goes for the metrics port.
+- **Callers cannot be told apart.** Every call is logged as `anonymous`. You
+  can see how much the service is used, but not by whom.
+- **A request limit would apply to everyone together.** `SEC1_HTTP_RATE`
+  counts per client, and without tokens there is one client. Leave it unset,
+  or set it high enough to act only as a safety valve.
+- **The server says so at start-up.** It logs a warning that the HTTP
+  transport has no authentication. That is expected.
+
+Requests from other browser origins are refused either way, so a web page
+someone on the network visits cannot call the service through their browser.
+
+If you later want to know which team is calling, or to cut one caller off,
+add tokens: nothing else about the deployment changes.
 
 ## A token per team
+
+Skip this section and the next if you are running without authentication.
 
 A single shared token (`SEC1_HTTP_TOKEN`) cannot say who made a call, and
 revoking it cuts everyone off. A token file gives each team its own:
@@ -170,11 +204,11 @@ answers degrade to `unknown`, which is safe but not helpful.
 
 ## Checklist
 
-- [ ] TLS in front of the service. The token is sent on every request.
-- [ ] A token per team, in a Secret, with the file readable only by the
-      service.
-- [ ] `SEC1_HTTP_RATE` set.
+- [ ] The service is reachable only from the networks your staff use, and
+      has no public address.
 - [ ] The metrics port reachable by the scraper and not by callers.
+- [ ] With tokens: TLS in front of the service, since the token is sent on
+      every request; a token per team, in a Secret; and `SEC1_HTTP_RATE` set.
 - [ ] Outbound HTTPS allowed to the hosts listed in
       [deployment.md](deployment.md#kubernetes).
 - [ ] A pinned image version, not `latest`.

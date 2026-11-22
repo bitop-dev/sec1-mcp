@@ -1,13 +1,16 @@
-# sec1-mcp as a shared service.
+# sec1-mcp as a shared service on an internal network.
 #
-# Before applying, create the token file as a Secret, one line per team:
+# As written, this runs WITHOUT authentication: anyone who can reach the
+# Service can use it. That suits a network only your own staff are on. What
+# keeps others out is the network, so keep the Service cluster-internal or
+# behind an internal-only ingress, and see the NetworkPolicy at the end.
+#
+# To tell teams apart, or to require a token, uncomment the three blocks
+# marked "tokens" and create the Secret first, one line per team:
 #
 #   printf 'platform %s\ndata-science %s\n' "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > tokens
 #   kubectl create secret generic sec1-mcp-tokens --from-file=tokens
 #   rm tokens
-#
-# Give each team its own line from that file. To add or revoke a team, update
-# the Secret; the server re-reads the file without a restart.
 #
 # See docs/shared-service.md for what each setting does.
 apiVersion: apps/v1
@@ -37,8 +40,9 @@ spec:
           env:
             - {name: SEC1_HTTP_ADDR, value: "0.0.0.0:8080"}
             - {name: SEC1_METRICS_ADDR, value: "0.0.0.0:9090"}
-            - {name: SEC1_HTTP_TOKEN_FILE, value: /etc/sec1-mcp/tokens}
-            - {name: SEC1_HTTP_RATE, value: "120"}
+            # tokens: a token per team, and a request limit for each.
+            # - {name: SEC1_HTTP_TOKEN_FILE, value: /etc/sec1-mcp/tokens}
+            # - {name: SEC1_HTTP_RATE, value: "120"}
             # Optional. Both only raise rate limits; see docs/shared-service.md.
             # - name: GITHUB_TOKEN
             #   valueFrom: {secretKeyRef: {name: sec1-mcp-upstream, key: github-token}}
@@ -59,11 +63,13 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts:
-            - {name: tokens, mountPath: /etc/sec1-mcp, readOnly: true}
+            # tokens:
+            # - {name: tokens, mountPath: /etc/sec1-mcp, readOnly: true}
             - {name: cache, mountPath: /home/nonroot/.cache}
       volumes:
-        - name: tokens
-          secret: {secretName: sec1-mcp-tokens}
+        # tokens:
+        # - name: tokens
+        #   secret: {secretName: sec1-mcp-tokens}
         - name: cache
           emptyDir: {sizeLimit: 2Gi}
 ---
@@ -78,3 +84,29 @@ spec:
   selector: {app: sec1-mcp}
   ports:
     - {name: http, port: 80, targetPort: http}
+---
+# With no tokens, this is what decides who can call the service. It admits
+# only pods in namespaces you label, and the namespace your ingress
+# controller runs in. Adjust the selectors to your cluster; a NetworkPolicy
+# only takes effect where the network plugin enforces them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sec1-mcp
+spec:
+  podSelector:
+    matchLabels: {app: sec1-mcp}
+  policyTypes: [Ingress]
+  ingress:
+    # Callers: the MCP endpoint only.
+    - from:
+        - namespaceSelector:
+            matchLabels: {sec1-mcp/access: "true"}
+      ports:
+        - {port: http}
+    # Your metrics scraper: the metrics port only.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: monitoring}
+      ports:
+        - {port: metrics}

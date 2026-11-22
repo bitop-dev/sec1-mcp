@@ -6,6 +6,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `deploy/kubernetes.yaml` now runs without authentication by default, for
+  a service on an internal network, with the token settings left as
+  commented options and a NetworkPolicy to limit who can reach it.
+- The shared-service guide explains running without authentication: what
+  makes it reasonable, and what the network then has to do.
+
 ## [0.3.0] - 2026-11-22
 
 ### Added

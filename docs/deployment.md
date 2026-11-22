@@ -74,8 +74,10 @@ When `SEC1_HTTP_TOKEN` or `SEC1_HTTP_TOKEN_FILE` is set, every request to
 `/mcp` must carry `Authorization: Bearer <token>`; anything else gets 401.
 
 When neither is set, the server logs a warning at start-up and accepts every
-request. That is only reasonable when the server is bound to localhost, or
-when something in front of it authenticates callers.
+request. That is reasonable when the server is bound to localhost, when
+something in front of it authenticates callers, or when it sits on a network
+that only your own staff can reach; see
+[Running without authentication](shared-service.md#running-without-authentication).
 
 `SEC1_HTTP_TOKEN` is one secret for everyone. `SEC1_HTTP_TOKEN_FILE` gives
 each team its own named token, which is what you want for a service several
