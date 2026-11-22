@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-22
+
 ### Added
 
 - `check_sbom`: checks the packages inside an image from a software bill of
@@ -113,6 +115,7 @@ The first release.
 - Credentials are read from the environment only and are never logged or
   cached.
 
-[Unreleased]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/bitop-dev/sec1-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bitop-dev/sec1-mcp/releases/tag/v0.1.0
