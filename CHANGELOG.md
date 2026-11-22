@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-21
+
 ### Added
 
 - `support` on every answer: whether the version's release line still
@@ -90,5 +92,6 @@ The first release.
 - Credentials are read from the environment only and are never logged or
   cached.
 
-[Unreleased]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/bitop-dev/sec1-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bitop-dev/sec1-mcp/releases/tag/v0.1.0
