@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -18,7 +19,7 @@ type fake struct {
 	t              *testing.T
 	osvDown        bool
 	metasploitDown bool
-	nvdCalls       int
+	nvdCalls       atomic.Int32
 }
 
 func (f *fake) client() *Client {
@@ -120,7 +121,7 @@ func (f *fake) client() *Client {
 	// NVD: nothing affects the running version. It holds version data for
 	// one of the two exploited CVEs that name the product.
 	mux.HandleFunc("/nvd", func(w http.ResponseWriter, r *http.Request) {
-		f.nvdCalls++
+		f.nvdCalls.Add(1)
 		cves := []map[string]any{}
 		if _, exploitedOnly := r.URL.Query()["hasKev"]; exploitedOnly {
 			cves = append(cves, map[string]any{"cve": map[string]any{"id": "CVE-2026-2222"}})
@@ -332,10 +333,10 @@ func TestResponsesAreCached(t *testing.T) {
 	client := f.client()
 	component := Component{Name: "GitLab", Version: "19.6.1", CPE: "gitlab:gitlab"}
 	client.Check(context.Background(), component)
-	first := f.nvdCalls
+	first := f.nvdCalls.Load()
 	client.Check(context.Background(), component)
-	if first == 0 || f.nvdCalls != first {
-		t.Errorf("NVD was called %d times, then %d; the second check should be served from cache", first, f.nvdCalls)
+	if first == 0 || f.nvdCalls.Load() != first {
+		t.Errorf("NVD was called %d times, then %d; the second check should be served from cache", first, f.nvdCalls.Load())
 	}
 }
 
@@ -585,8 +586,8 @@ func TestProductFiledUnderTwoNVDNames(t *testing.T) {
 	f := &fake{t: t}
 	client := f.client()
 	client.Check(context.Background(), Component{Name: "two-names", Version: "1.0.0", CPE: "f5:nginx", OtherCPEs: []string{"f5:nginx_open_source"}})
-	if f.nvdCalls != 2 {
-		t.Errorf("NVD was asked %d times, want once per product name", f.nvdCalls)
+	if f.nvdCalls.Load() != 2 {
+		t.Errorf("NVD was asked %d times, want once per product name", f.nvdCalls.Load())
 	}
 }
 
